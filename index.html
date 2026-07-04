@@ -647,6 +647,18 @@
   let currentPerson = 0;
   let currentUser   = 'Rakshit';
 
+  // ── IST Date/Time Helper ──
+  function getISTNow() {
+    const now = new Date();
+    return new Date(now.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }));
+  }
+  function getISTToday() {
+    return getISTNow().toISOString().split('T')[0];
+  }
+  function getISTDatetime() {
+    return new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' });
+  }
+
   const memberProfiles = {
     Rakshit: {
       diet: 'Mostly vegetarian, eats egg whites and boneless chicken dishes',
@@ -852,8 +864,8 @@
     const qty        = document.getElementById('cooked-qty').value.trim();
     const mealSource = getSelected('meal-source-pills') || 'Home cooked';
     const isHome     = mealSource === 'Home cooked';
-    const now        = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
-    const today      = new Date().toISOString().split('T')[0];
+    const now        = getISTDatetime();
+    const today      = getISTToday();
 
     // Who ate this
     const eaters = [...document.querySelectorAll('#log-member-pills .pill.selected')].map(p => p.textContent);
@@ -862,7 +874,7 @@
     // Log for each member
     for (const member of eaters) {
       const entry = { dish, qty, mealType: mealSource, loggedBy: member, date: today, time: now };
-      mealLog.unshift({ dish, time: now, date: today, loggedBy: member });
+      mealLog.unshift({ dish, time: now, date: today, loggedBy: member, tz: 'IST' });
       await sheetPost({ action: 'logMeal', mealName: dish + (qty ? ' (' + qty + ')' : ''), mealType: mealSource, loggedBy: member, notes: qty || '' });
     }
 
@@ -1060,7 +1072,7 @@
   let profileMealLog = []; // meals for currently viewed date+person
 
   function initProgressDate() {
-    const today = new Date().toISOString().split('T')[0];
+    const today = getISTToday();
     document.getElementById('progress-date').value = today;
   }
 
