@@ -1,0 +1,1178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nutrition OS — Gurugram Flat</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #f9f8f5;
+      --surface: #ffffff;
+      --surface2: #f3f2ef;
+      --border: rgba(0,0,0,0.1);
+      --border2: rgba(0,0,0,0.18);
+      --text: #1a1a18;
+      --text2: #6b6b67;
+      --text3: #9b9b96;
+      --accent: #1a1a18;
+      --radius: 10px;
+      --radius-lg: 14px;
+      --green-bg: #eaf3de; --green-text: #27500a;
+      --amber-bg: #faeeda; --amber-text: #633806;
+      --blue-bg: #e6f1fb; --blue-text: #0c447c;
+      --red-bg: #fcebeb; --red-text: #791f1f;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #141413;
+        --surface: #1e1e1c;
+        --surface2: #272725;
+        --border: rgba(255,255,255,0.1);
+        --border2: rgba(255,255,255,0.18);
+        --text: #f0ede8;
+        --text2: #9b9b96;
+        --text3: #6b6b67;
+        --accent: #f0ede8;
+        --green-bg: #173404; --green-text: #c0dd97;
+        --amber-bg: #412402; --amber-text: #fac775;
+        --blue-bg: #042c53; --blue-text: #b5d4f4;
+        --red-bg: #501313; --red-text: #f7c1c1;
+      }
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      font-size: 15px;
+      line-height: 1.6;
+    }
+
+    .topbar {
+      background: var(--surface);
+      border-bottom: 0.5px solid var(--border);
+      padding: 0 1.25rem;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .topbar-inner {
+      max-width: 680px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 52px;
+    }
+    .logo { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+    .logo span { color: var(--text2); font-weight: 400; }
+
+    .nav {
+      display: flex;
+      gap: 2px;
+      background: var(--surface2);
+      border-radius: 99px;
+      padding: 3px;
+    }
+    .tab {
+      padding: 5px 14px;
+      font-size: 13px;
+      border: none;
+      background: none;
+      color: var(--text2);
+      border-radius: 99px;
+      cursor: pointer;
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+    .tab.active {
+      background: var(--surface);
+      color: var(--text);
+      font-weight: 500;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+
+    .main { max-width: 680px; margin: 0 auto; padding: 1.5rem 1.25rem 4rem; }
+
+    .section { display: none; }
+    .section.active { display: block; }
+
+    /* Cards */
+    .card {
+      background: var(--surface);
+      border: 0.5px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 1rem 1.25rem;
+      margin-bottom: 1rem;
+    }
+
+    .label {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text2);
+      margin-bottom: 10px;
+    }
+
+    /* Tags */
+    .tags-wrap {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 12px;
+      min-height: 36px;
+    }
+    .item-tag {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--surface2);
+      border: 0.5px solid var(--border);
+      border-radius: 99px;
+      padding: 4px 10px;
+      font-size: 13px;
+    }
+    .item-tag .qty { color: var(--text2); font-size: 11px; }
+    .item-tag button {
+      background: none; border: none; cursor: pointer;
+      color: var(--text2); font-size: 15px; line-height: 1;
+      padding: 0; margin-left: 2px;
+    }
+    .item-tag button:hover { color: var(--text); }
+
+    /* Inputs */
+    input[type="text"], textarea, select {
+      background: var(--surface2);
+      border: 0.5px solid var(--border);
+      border-radius: var(--radius);
+      padding: 8px 12px;
+      font-size: 14px;
+      font-family: inherit;
+      color: var(--text);
+      width: 100%;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input[type="text"]:focus, textarea:focus, select:focus {
+      border-color: var(--border2);
+    }
+    textarea { min-height: 60px; resize: vertical; line-height: 1.5; }
+
+    .add-row { display: flex; gap: 8px; align-items: center; }
+    .add-row input { flex: 2; }
+    .add-row input.qty { flex: 1; }
+
+    /* Buttons */
+    .btn {
+      padding: 8px 16px;
+      border: 0.5px solid var(--border2);
+      border-radius: var(--radius);
+      background: none;
+      cursor: pointer;
+      font-size: 13px;
+      font-family: inherit;
+      color: var(--text);
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+    .btn:hover { background: var(--surface2); }
+    .btn:active { transform: scale(0.98); }
+    .btn-primary {
+      background: var(--accent);
+      color: var(--bg);
+      border-color: transparent;
+      font-weight: 500;
+    }
+    .btn-primary:hover { opacity: 0.85; background: var(--accent); }
+    .btn-sm { padding: 5px 11px; font-size: 12px; }
+    .btn-full { width: 100%; text-align: center; }
+
+    /* Quick add */
+    .quick-wrap { display: flex; flex-wrap: wrap; gap: 6px; }
+
+    /* Pills */
+    .pills { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+    .pill {
+      border: 0.5px solid var(--border);
+      border-radius: 99px;
+      padding: 4px 12px;
+      font-size: 12px;
+      background: none;
+      cursor: pointer;
+      color: var(--text2);
+      font-family: inherit;
+      transition: all 0.15s;
+    }
+    .pill.selected {
+      background: var(--text);
+      color: var(--bg);
+      border-color: transparent;
+    }
+
+    /* AI output */
+    .ai-box {
+      border: 0.5px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 1.25rem;
+      background: var(--surface);
+      min-height: 100px;
+      font-size: 14px;
+      line-height: 1.8;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .ai-box.empty { color: var(--text3); font-style: italic; }
+    .ai-box.loading { color: var(--text2); }
+
+    .loading-dots::after {
+      content: '';
+      animation: dots 1.2s steps(4, end) infinite;
+    }
+    @keyframes dots {
+      0%, 20% { content: ''; }
+      40% { content: '.'; }
+      60% { content: '..'; }
+      80%, 100% { content: '...'; }
+    }
+
+    /* Metrics grid */
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 1rem; }
+    .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 1rem; }
+    .metric {
+      background: var(--surface2);
+      border-radius: var(--radius);
+      padding: 0.75rem 1rem;
+    }
+    .metric-val { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
+    .metric-lbl { font-size: 11px; color: var(--text2); margin-top: 2px; }
+
+    /* Slider */
+    .slider-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+    .slider-row label { font-size: 13px; color: var(--text2); min-width: 55px; }
+    .slider-row input[type="range"] { flex: 1; accent-color: var(--text); }
+    .slider-row .val { font-size: 13px; font-weight: 500; min-width: 72px; text-align: right; }
+
+    /* Person toggle */
+    .person-toggle { display: flex; gap: 6px; flex-wrap: wrap; }
+    .person-btn {
+      padding: 5px 14px;
+      font-size: 13px;
+      border: 0.5px solid var(--border);
+      border-radius: 99px;
+      background: none;
+      cursor: pointer;
+      color: var(--text2);
+      font-family: inherit;
+    }
+    .person-btn.active {
+      background: var(--text);
+      color: var(--bg);
+      border-color: transparent;
+      font-weight: 500;
+    }
+
+    /* Supplement chips */
+    .supp-wrap { display: flex; flex-wrap: wrap; gap: 6px; }
+    .supp-chip {
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: 99px;
+      font-weight: 500;
+    }
+    .chip-green { background: var(--green-bg); color: var(--green-text); }
+    .chip-amber { background: var(--amber-bg); color: var(--amber-text); }
+    .chip-blue { background: var(--blue-bg); color: var(--blue-text); }
+
+    /* Divider */
+    hr { border: none; border-top: 0.5px solid var(--border); margin: 1.25rem 0; }
+
+    /* Notice */
+    .notice {
+      font-size: 12px;
+      color: var(--text2);
+      background: var(--surface2);
+      border-radius: var(--radius);
+      padding: 8px 12px;
+      margin-bottom: 1rem;
+      line-height: 1.5;
+    }
+
+    /* Success flash */
+    .flash { font-size: 12px; color: var(--green-text); margin-left: 10px; display: none; }
+
+    /* Section title */
+    .sec-title { font-size: 17px; font-weight: 600; margin-bottom: 4px; letter-spacing: -0.01em; }
+    .sec-sub { font-size: 13px; color: var(--text2); margin-bottom: 1.25rem; }
+
+    /* Meal log item */
+    .log-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 0;
+      border-bottom: 0.5px solid var(--border);
+      font-size: 13px;
+    }
+    .log-item:last-child { border-bottom: none; }
+    .log-time { color: var(--text3); font-size: 11px; }
+
+    @media (max-width: 480px) {
+      .grid-4 { grid-template-columns: 1fr 1fr; }
+      .nav { gap: 1px; }
+      .tab { padding: 5px 10px; font-size: 12px; }
+      .topbar-inner { flex-direction: column; align-items: flex-start; gap: 8px; height: auto; padding: 10px 0; }
+    }
+  </style>
+</head>
+<body>
+
+
+
+
+<!-- User Modal -->
+<div id="user-modal" style="display:flex;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center;">
+  <div style="background:var(--surface);border-radius:var(--radius-lg);padding:1.5rem;max-width:340px;width:90%;border:0.5px solid var(--border);text-align:center;">
+    <div style="font-size:17px;font-weight:600;margin-bottom:6px;">Who are you?</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:1.25rem;">Meals and macros will be personalised for you.</div>
+    <div style="display:flex;flex-direction:column;gap:8px;">
+      <button class="btn btn-primary" onclick="selectUser('Rakshit', 0)">Rakshit</button>
+      <button class="btn" onclick="selectUser('Madhav', 1)">Madhav</button>
+      <button class="btn" onclick="selectUser('Sanyam', 2)">Sanyam</button>
+    </div>
+  </div>
+</div>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <div class="logo">Nutrition OS <span>· Gurugram flat</span></div>
+    <nav class="nav">
+      <button class="tab active" onclick="switchTab('inventory', this)">Inventory</button>
+      <button class="tab" onclick="switchTab('meals', this)">Meals</button>
+      <button class="tab" onclick="switchTab('shopping', this)">Shopping</button>
+      <button class="tab" onclick="switchTab('profile', this)">Profile</button>
+    </nav>
+  </div>
+</div>
+
+<main class="main">
+
+  <!-- ── INVENTORY ── -->
+  <div id="tab-inventory" class="section active">
+    <div class="sec-title">Kitchen inventory</div>
+    <div class="sec-sub">What's in your fridge and pantry right now?</div>
+
+    <div class="notice">Add everything you have. Claude reads this to suggest meals and generate your shopping list.</div>
+
+    <div class="card">
+      <div class="label">Current items</div>
+      <div class="tags-wrap" id="inventory-tags">
+        <span style="font-size:13px; color:var(--text3); align-self:center;">Nothing added yet</span>
+      </div>
+      <div class="add-row">
+        <input type="text" id="item-input" placeholder="Item name (e.g. paneer, eggs…)" />
+        <input type="text" class="qty" id="qty-input" placeholder="Qty (e.g. 400g)" />
+        <button class="btn btn-sm" onclick="addItem()">Add</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="label">Quick add</div>
+      <div class="quick-wrap">
+        <button class="btn btn-sm" onclick="quickAdd('Eggs','12 pcs')">Eggs</button>
+        <button class="btn btn-sm" onclick="quickAdd('Paneer','400g')">Paneer</button>
+        <button class="btn btn-sm" onclick="quickAdd('Chicken breast','500g')">Chicken breast</button>
+        <button class="btn btn-sm" onclick="quickAdd('Masoor dal','500g')">Masoor dal</button>
+        <button class="btn btn-sm" onclick="quickAdd('Moong dal','500g')">Moong dal</button>
+        <button class="btn btn-sm" onclick="quickAdd('Rajma','500g')">Rajma</button>
+        <button class="btn btn-sm" onclick="quickAdd('Chana','500g')">Chana</button>
+        <button class="btn btn-sm" onclick="quickAdd('Oats','1kg')">Oats</button>
+        <button class="btn btn-sm" onclick="quickAdd('Brown rice','1kg')">Brown rice</button>
+        <button class="btn btn-sm" onclick="quickAdd('Whole wheat roti atta','1kg')">Atta</button>
+        <button class="btn btn-sm" onclick="quickAdd('Greek yogurt','400g')">Greek yogurt</button>
+        <button class="btn btn-sm" onclick="quickAdd('Low-fat milk','1L')">Milk</button>
+        <button class="btn btn-sm" onclick="quickAdd('Tofu','300g')">Tofu</button>
+        <button class="btn btn-sm" onclick="quickAdd('Spinach','250g')">Spinach</button>
+        <button class="btn btn-sm" onclick="quickAdd('Broccoli','300g')">Broccoli</button>
+        <button class="btn btn-sm" onclick="quickAdd('Sweet potato','500g')">Sweet potato</button>
+        <button class="btn btn-sm" onclick="quickAdd('Banana','6 pcs')">Banana</button>
+        <button class="btn btn-sm" onclick="quickAdd('Olive oil','500ml')">Olive oil</button>
+        <button class="btn btn-sm" onclick="quickAdd('Whey protein','1kg')">Whey protein</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="label">Bulk add items</div>
+      <div style="font-size:13px;color:var(--text2);margin-bottom:8px;">Paste a list — one item per line, or comma separated. Format: <em>item name, quantity</em></div>
+      <textarea id="bulk-input" placeholder="Eggs, 12 pcs&#10;Paneer, 400g&#10;Brown rice, 1kg&#10;Chicken breast, 500g" style="min-height:100px;margin-bottom:8px;font-size:13px;"></textarea>
+      <button class="btn btn-primary btn-full" onclick="bulkAdd()">Add all items to inventory</button>
+    </div>
+
+    <button class="btn btn-primary btn-full" onclick="switchTab('meals', document.querySelectorAll('.tab')[1])">
+      Get meal suggestions based on inventory →
+    </button>
+  </div>
+
+  <!-- ── MEALS ── -->
+  <div id="tab-meals" class="section">
+    <div class="sec-title">Meal suggestions</div>
+    <div class="sec-sub">Claude picks meals from your inventory, tuned to your macros.</div>
+
+    <div class="card">
+      <div class="label">Who is eating?</div>
+      <div style="font-size:13px;color:var(--text2);margin-bottom:8px;">Select members — Claude will suggest one common meal with personalised portions.</div>
+      <div class="pills" id="member-pills">
+        <button class="pill selected" onclick="toggleMember(this, 'Rakshit')">Rakshit</button>
+        <button class="pill selected" onclick="toggleMember(this, 'Madhav')">Madhav</button>
+        <button class="pill selected" onclick="toggleMember(this, 'Sanyam')">Sanyam</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="label">Which meal?</div>
+      <div class="pills" id="mealtime-pills">
+        <button class="pill selected" onclick="selectPill(this,'mealtime')">Breakfast</button>
+        <button class="pill" onclick="selectPill(this,'mealtime')">Lunch</button>
+        <button class="pill" onclick="selectPill(this,'mealtime')">Dinner</button>
+        <button class="pill" onclick="selectPill(this,'mealtime')">Post-workout snack</button>
+      </div>
+      <div class="label">Any preference?</div>
+      <div class="pills" id="pref-pills">
+        <button class="pill" onclick="togglePill(this)">Quick (under 20 min)</button>
+        <button class="pill" onclick="togglePill(this)">High protein priority</button>
+        <button class="pill" onclick="togglePill(this)">Light meal</button>
+        <button class="pill" onclick="togglePill(this)">Something different today</button>
+      </div>
+      <div class="label" style="margin-top:4px;">Note for the maid / cook</div>
+      <textarea id="meal-note" placeholder="e.g. she has 30 mins, skip spicy, we had dal last night…"></textarea>
+    </div>
+
+    <div id="prev-cooked-hint" class="notice" style="display:none;margin-bottom:1rem;"></div>
+    <button class="btn btn-primary btn-full" onclick="getMealSuggestions()" style="margin-bottom:1rem;">
+      Get suggestions from Claude →
+    </button>
+
+    <div class="label">Suggestions</div>
+    <div class="ai-box empty" id="meal-output">Add your inventory, then tap above to get suggestions.</div>
+
+    <hr />
+
+    <div class="label">Log a meal</div>
+
+    <div class="card">
+      <div class="label" style="margin-bottom:8px;">Was this a home meal or outside?</div>
+      <div class="pills" id="meal-source-pills" style="margin-bottom:12px;">
+        <button class="pill selected" onclick="selectPill(this, 'source')">Home cooked</button>
+        <button class="pill" onclick="selectPill(this, 'source')">Outside / ordered in</button>
+      </div>
+      <div class="label" style="margin-bottom:6px;">Dish name</div>
+      <input type="text" id="cooked-input" placeholder="e.g. Dal tadka, Grilled chicken, Momos..." style="margin-bottom:8px;" />
+      <div class="label" style="margin-bottom:6px;">Quantity <span style="font-weight:400;text-transform:none;letter-spacing:0;">(optional — e.g. 200g, 2 rotis, 1 bowl)</span></div>
+      <input type="text" id="cooked-qty" placeholder="Leave blank to let Claude estimate" style="margin-bottom:8px;" />
+      <div class="label" style="margin-bottom:6px;">Who ate this?</div>
+      <div class="pills" id="log-member-pills" style="margin-bottom:12px;">
+        <button class="pill selected" onclick="togglePill(this)">Rakshit</button>
+        <button class="pill selected" onclick="togglePill(this)">Madhav</button>
+        <button class="pill selected" onclick="togglePill(this)">Sanyam</button>
+      </div>
+      <button class="btn btn-primary btn-full" onclick="logMeal()">Log meal</button>
+    </div>
+
+    <div id="meal-log"></div>
+    <div class="ai-box empty" id="meal-log-ai" style="margin-top:1rem;display:none;"></div>
+  </div>
+
+  <!-- ── SHOPPING ── -->
+  <div id="tab-shopping" class="section">
+    <div class="sec-title">Shopping list</div>
+    <div class="sec-sub">Claude generates a Blinkit/Zepto-ready list based on your inventory gaps.</div>
+
+    <div class="card">
+      <div class="label">Order covers how many days?</div>
+      <div class="pills" id="duration-pills">
+        <button class="pill selected" onclick="selectPill(this,'duration')">3 days</button>
+        <button class="pill" onclick="selectPill(this,'duration')">5 days</button>
+        <button class="pill" onclick="selectPill(this,'duration')">1 week</button>
+      </div>
+      <div class="label" style="margin-top:4px;">Any constraints?</div>
+      <textarea id="shop-note" placeholder="e.g. budget ₹2000, skip broccoli, add whey protein…"></textarea>
+    </div>
+
+    <button class="btn btn-primary btn-full" onclick="getShoppingList()" style="margin-bottom:1rem;">
+      Generate shopping list →
+    </button>
+
+    <div class="label">Your list</div>
+    <div class="ai-box empty" id="shop-output">Your Blinkit/Zepto-ready list will appear here.</div>
+
+    <div style="display:flex; align-items:center; margin-top:12px;">
+      <button class="btn btn-sm" onclick="copyList()">Copy for WhatsApp / Blinkit</button>
+      <span class="flash" id="copy-flash">Copied!</span>
+    </div>
+
+    <hr />
+
+    <div class="label">Recommended supplements</div>
+    <div class="supp-wrap">
+      <span class="supp-chip chip-green">Whey protein — 25g post workout</span>
+      <span class="supp-chip chip-blue">Creatine monohydrate — 5g/day</span>
+      <span class="supp-chip chip-amber">Vitamin D3 — 2000 IU/day</span>
+      <span class="supp-chip chip-green">Omega-3 — 1g with a meal</span>
+      <span class="supp-chip chip-blue">Magnesium glycinate — 200mg before bed</span>
+      <span class="supp-chip chip-amber">Multivitamin — 1/day with breakfast</span>
+    </div>
+  </div>
+
+  <!-- ── PROFILE ── -->
+  <div id="tab-profile" class="section">
+    <div class="sec-title">Profile</div>
+    <div class="sec-sub">Your macros, meal history and diet progress.</div>
+
+    <!-- Member selector -->
+    <div class="card" style="margin-bottom:1rem;">
+      <div class="label">Whose profile?</div>
+      <div class="person-toggle">
+        <button class="person-btn active" onclick="switchPerson(this,0)">Rakshit</button>
+        <button class="person-btn" onclick="switchPerson(this,1)">Madhav</button>
+        <button class="person-btn" onclick="switchPerson(this,2)">Sanyam</button>
+      </div>
+    </div>
+
+    <!-- Macro targets -->
+    <div class="card">
+      <div class="label">Daily macro targets</div>
+      <div class="grid-4" style="margin-top:8px;">
+        <div class="metric"><div class="metric-val" id="m-cal">1900</div><div class="metric-lbl">Calories</div></div>
+        <div class="metric"><div class="metric-val" id="m-protein">150g</div><div class="metric-lbl">Protein</div></div>
+        <div class="metric"><div class="metric-val" id="m-carbs">185g</div><div class="metric-lbl">Carbs</div></div>
+        <div class="metric"><div class="metric-val" id="m-fat">55g</div><div class="metric-lbl">Fat</div></div>
+      </div>
+      <div class="label" style="margin-top:1rem;">Adjust for your body</div>
+      <div class="slider-row">
+        <label>Weight</label>
+        <input type="range" min="55" max="110" value="75" id="weight-slider" oninput="updateMacros()" step="1" />
+        <span class="val" id="weight-val">75 kg</span>
+      </div>
+      <div class="slider-row">
+        <label>Goal bias</label>
+        <input type="range" min="0" max="100" value="50" id="goal-slider" oninput="updateMacros()" step="1" />
+        <span class="val" id="goal-val">Balanced</span>
+      </div>
+      <div style="font-size:12px;color:var(--text3);margin-top:4px;">~2g protein/kg · fat ≥0.7g/kg · rest from carbs</div>
+    </div>
+
+    <!-- Daily progress -->
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <div class="label" style="margin-bottom:0;">Diet progress</div>
+        <input type="date" id="progress-date" style="font-size:12px;padding:4px 8px;width:auto;" onchange="loadDayProgress()" />
+      </div>
+
+      <div style="margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text2);margin-bottom:4px;">
+          <span>Protein</span><span id="prog-protein-label">0 / 150g</span>
+        </div>
+        <div style="height:8px;background:var(--surface2);border-radius:99px;overflow:hidden;">
+          <div id="prog-protein-bar" style="height:100%;background:var(--green-text);border-radius:99px;width:0%;transition:width 0.4s;"></div>
+        </div>
+      </div>
+      <div style="margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text2);margin-bottom:4px;">
+          <span>Calories</span><span id="prog-cal-label">0 / 1900 kcal</span>
+        </div>
+        <div style="height:8px;background:var(--surface2);border-radius:99px;overflow:hidden;">
+          <div id="prog-cal-bar" style="height:100%;background:var(--blue-text);border-radius:99px;width:0%;transition:width 0.4s;"></div>
+        </div>
+      </div>
+      <div style="margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text2);margin-bottom:4px;">
+          <span>Carbs</span><span id="prog-carbs-label">0 / 185g</span>
+        </div>
+        <div style="height:8px;background:var(--surface2);border-radius:99px;overflow:hidden;">
+          <div id="prog-carbs-bar" style="height:100%;background:var(--amber-text);border-radius:99px;width:0%;transition:width 0.4s;"></div>
+        </div>
+      </div>
+      <div style="margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text2);margin-bottom:4px;">
+          <span>Fat</span><span id="prog-fat-label">0 / 55g</span>
+        </div>
+        <div style="height:8px;background:var(--surface2);border-radius:99px;overflow:hidden;">
+          <div id="prog-fat-bar" style="height:100%;background:#b07d3a;border-radius:99px;width:0%;transition:width 0.4s;"></div>
+        </div>
+      </div>
+      <div style="margin-bottom:12px;">
+        <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text2);margin-bottom:4px;">
+          <span>Fiber</span><span id="prog-fiber-label">0 / 30g</span>
+        </div>
+        <div style="height:8px;background:var(--surface2);border-radius:99px;overflow:hidden;">
+          <div id="prog-fiber-bar" style="height:100%;background:#5a9e6f;border-radius:99px;width:0%;transition:width 0.4s;"></div>
+        </div>
+      </div>
+
+      <button class="btn btn-primary btn-full" onclick="getMealBreakdown()">Get meal breakdown for this day &rarr;</button>
+      <div class="ai-box empty" id="breakdown-output" style="margin-top:1rem;display:none;"></div>
+    </div>
+
+    <!-- Meal history -->
+    <div class="card">
+      <div class="label">Meals logged</div>
+      <div id="profile-meal-log" style="font-size:13px;color:var(--text3);">No meals logged yet for this date.</div>
+    </div>
+
+    <button class="btn btn-primary btn-full" onclick="askFullDayPlan()">Ask Claude for a full day meal plan →</button>
+    <div class="ai-box empty" id="plan-output" style="margin-top:1rem;display:none;"></div>
+  </div>
+
+</main>
+
+<script>
+  // ── Config ──
+  const CLAUDE_API  = '/api/claude';
+  const MODEL       = 'claude-sonnet-4-5';
+  const SHEET_URL   = 'https://script.google.com/macros/s/AKfycbxXDdY5y_QUVIML1Zb4nwTnuryI_Uqhe-EGwc_iDT_s5OZ9wJNcfWvILo4rCC5bN6XT/exec';
+
+  // ── State ──
+  let inventory    = [];
+  let mealLog      = [];
+  let personMacros = [
+    { person: 'Rakshit', cal: 1900, protein: 150, carbs: 185, fat: 55, fiber: 30, weight: 75 },
+    { person: 'Madhav',  cal: 1800, protein: 140, carbs: 175, fat: 52, fiber: 28, weight: 70 },
+    { person: 'Sanyam',  cal: 2000, protein: 158, carbs: 195, fat: 58, fiber: 32, weight: 80 }
+  ];
+  let currentPerson = 0;
+  let currentUser   = 'Rakshit';
+
+  const memberProfiles = {
+    Rakshit: {
+      diet: 'Mostly vegetarian, eats egg whites and boneless chicken dishes',
+      likes: 'Spicy and masaledar food, salads with tasty dressing, nothing boring',
+      dislikes: 'Bland food',
+      allergies: 'None'
+    },
+    Madhav: {
+      diet: 'Non-vegetarian, prefers chicken and eggs over vegetables',
+      likes: 'Chole, Rajma, Paneer, Tofu, Soya, Eggs, Chicken, Roti, Rice',
+      dislikes: 'Most vegetables, leafy greens, onion',
+      allergies: 'None'
+    },
+    Sanyam: {
+      diet: 'Pure vegetarian',
+      likes: 'Most vegetables, medium spice, varied dishes',
+      dislikes: 'Boring dishes like aloo jeera, overly simple food',
+      allergies: 'None'
+    }
+  };
+
+  let eatingMembers = ['Rakshit', 'Madhav', 'Sanyam']; // who is eating this meal
+
+  // ── Sheet API ──
+  async function sheetGet(action) {
+    try {
+      const res = await fetch(SHEET_URL + '?action=' + action);
+      return await res.json();
+    } catch(e) { console.error('Sheet GET error:', e); return null; }
+  }
+
+  async function sheetPost(body) {
+    try {
+      const res = await fetch(SHEET_URL, { method: 'POST', body: JSON.stringify(body) });
+      return await res.json();
+    } catch(e) { console.error('Sheet POST error:', e); return null; }
+  }
+
+  // ── Sync from Sheet ──
+  async function syncAll() {
+    showToast('Syncing with Google Sheet…', 'info');
+
+    const invData = await sheetGet('getInventory');
+    if (invData && invData.items) {
+      inventory = invData.items.map(i => ({ name: i.item, qty: i.quantity, unit: i.unit, updatedBy: i.updatedBy }));
+      renderInventory();
+    }
+
+    const logData = await sheetGet('getMealLog');
+    if (logData && logData.meals) {
+      mealLog = logData.meals.map(m => ({ dish: m.mealName, time: m.date, date: m.date, loggedBy: m.loggedBy }));
+      renderLog();
+    }
+
+    const macroData = await sheetGet('getMacros');
+    if (macroData && macroData.macros && macroData.macros.length > 0) {
+      personMacros = macroData.macros.map(m => ({
+        person: m.person, cal: m.calories, protein: m.protein, carbs: m.carbs, fat: m.fat, weight: m.weight
+      }));
+      updateMacroDisplay();
+    }
+
+    showToast('Synced ✓', 'success');
+  }
+
+  // ── Toast ──
+  function showToast(msg, type) {
+    let t = document.getElementById('toast');
+    if (!t) {
+      t = document.createElement('div');
+      t.id = 'toast';
+      t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);padding:8px 16px;border-radius:99px;font-size:13px;font-weight:500;z-index:999;transition:opacity 0.3s;white-space:nowrap;border:0.5px solid var(--border);';
+      document.body.appendChild(t);
+    }
+    t.textContent = msg;
+    t.style.background = type === 'success' ? 'var(--green-bg)' : type === 'error' ? 'var(--red-bg)' : 'var(--surface)';
+    t.style.color = type === 'success' ? 'var(--green-text)' : type === 'error' ? 'var(--red-text)' : 'var(--text)';
+    t.style.opacity = '1';
+    clearTimeout(t._timer);
+    t._timer = setTimeout(() => t.style.opacity = '0', 2500);
+  }
+
+  // ── Tabs ──
+  function switchTab(name, btn) {
+    document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.getElementById('tab-' + name).classList.add('active');
+    if (btn) btn.classList.add('active');
+    if (name === 'profile') loadDayProgress();
+    if (name === 'meals') {
+      const prev = getPreviouslyCooked();
+      const hint = document.getElementById('prev-cooked-hint');
+      if (prev.length > 0) {
+        hint.style.display = 'block';
+        hint.innerHTML = '<strong>Recently cooked:</strong> ' + prev.join(' &nbsp;·&nbsp; ') + '<br><span style="font-size:11px;">Claude will avoid repeating these unless you ask.</span>';
+      }
+    }
+  }
+
+  // ── Inventory ──
+  function renderInventory() {
+    const wrap = document.getElementById('inventory-tags');
+    if (inventory.length === 0) {
+      wrap.innerHTML = '<span style="font-size:13px;color:var(--text3);align-self:center;">Nothing added yet — add items or tap Sync</span>';
+      return;
+    }
+    wrap.innerHTML = inventory.map((item, i) =>
+      '<div class="item-tag"><span>' + item.name + ' <span class="qty">' + (item.qty||'') + '</span></span>' +
+      '<button onclick="removeItem(' + i + ')" title="Remove">×</button></div>'
+    ).join('');
+  }
+
+  async function addItem() {
+    const name = document.getElementById('item-input').value.trim();
+    const qty  = document.getElementById('qty-input').value.trim() || '—';
+    if (!name) return;
+    inventory.push({ name, qty, updatedBy: currentUser });
+    document.getElementById('item-input').value = '';
+    document.getElementById('qty-input').value  = '';
+    renderInventory();
+    const res = await sheetPost({ action: 'addInventoryItem', item: name, quantity: qty, updatedBy: currentUser });
+    showToast(res && res.success ? 'Added to Sheet ✓' : 'Sheet sync failed', res && res.success ? 'success' : 'error');
+  }
+
+  async function removeItem(i) {
+    const itemName = inventory[i].name;
+    inventory.splice(i, 1);
+    renderInventory();
+    const res = await sheetPost({ action: 'removeInventoryItem', item: itemName });
+    showToast(res && res.success ? 'Removed ✓' : 'Sheet sync failed', res && res.success ? 'success' : 'error');
+  }
+
+  async function quickAdd(name, qty) {
+    if (inventory.find(i => i.name.toLowerCase() === name.toLowerCase())) { showToast(name + ' already in inventory', 'info'); return; }
+    inventory.push({ name, qty, updatedBy: currentUser });
+    renderInventory();
+    const res = await sheetPost({ action: 'addInventoryItem', item: name, quantity: qty, updatedBy: currentUser });
+    if (res && res.success) showToast(name + ' added ✓', 'success');
+  }
+
+  document.getElementById('item-input').addEventListener('keydown', e => { if (e.key === 'Enter') addItem(); });
+
+  // ── Pills ──
+  function selectPill(btn, group) {
+    btn.closest('.pills').querySelectorAll('.pill').forEach(p => p.classList.remove('selected'));
+    btn.classList.add('selected');
+  }
+  function togglePill(btn) { btn.classList.toggle('selected'); }
+  function getSelected(pillsId) {
+    return [...document.getElementById(pillsId).querySelectorAll('.pill.selected')].map(p => p.textContent).join(', ');
+  }
+
+  // ── Claude API ──
+  async function callClaude(prompt, outputId) {
+    const box = document.getElementById(outputId);
+    box.className = 'ai-box loading';
+    box.innerHTML = '<span class="loading-dots">Thinking</span>';
+    try {
+      const resp = await fetch(CLAUDE_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: MODEL, max_tokens: 1000, messages: [{ role: 'user', content: prompt }] })
+      });
+      const data = await resp.json();
+      if (data.error) throw new Error(data.error.message);
+      const text = data.content?.map(b => b.text || '').join('') || 'No response.';
+      box.className = 'ai-box';
+      box.textContent = text;
+    } catch(e) { box.className = 'ai-box'; box.textContent = 'Error: ' + e.message; }
+  }
+
+  function getInventoryText() {
+    if (inventory.length === 0) return 'No items in inventory.';
+    return inventory.map(i => i.name + ' (' + (i.qty||'—') + ')').join(', ');
+  }
+
+  // ── Meal suggestions ──
+  async function getMealSuggestions() {
+    const meal  = getSelected('mealtime-pills') || 'any meal';
+    const prefs = getSelected('pref-pills') || 'none';
+    const note  = document.getElementById('meal-note').value;
+
+    if (eatingMembers.length === 0) { showToast('Select at least one member', 'error'); return; }
+
+    // Build per-member profile summary
+    const memberSummary = eatingMembers.map(name => {
+      const p = memberProfiles[name];
+      const m = personMacros.find(x => x.person === name) || personMacros[0];
+      return name + ': ' + p.diet + '. Likes: ' + p.likes + '. Avoids: ' + p.dislikes + '. Macros: ' + m.cal + ' kcal, ' + m.protein + 'g protein.';
+    }).join(' | ');
+
+    const prevCooked = getPreviouslyCooked();
+    const prevNote = prevCooked.length > 0 ? 'Recently cooked (avoid repeating): ' + prevCooked.join(', ') + '.' : '';
+    const prompt = 'You are a nutrition-aware meal planner for young men in Gurugram, India who gym 3-4x/week for body recomposition. The cook is a daily household maid - suggest only simple, practical Indian home cooking, not restaurant or chef-level dishes. Today you are planning for ' + eatingMembers.length + ' people: ' + eatingMembers.join(', ') + '. Their profiles: ' + memberSummary + '. Kitchen inventory: ' + getInventoryText() + '. Meal type: ' + meal + '. Preferences: ' + prefs + '. Notes: ' + (note||'none') + '. ' + prevNote + ' Suggest 1-2 dishes that work for ALL members eating today (consider all dietary restrictions). For each dish: name (English + Hindi), ingredients and total quantities needed, simple 2-4 step cooking instructions suitable for a basic home cook (no fancy techniques), time to cook. Then show a PORTION GUIDE: for each member, their recommended portion size and estimated macros (protein, kcal). Keep it practical. If no dish works for everyone, suggest the closest option and note what to adjust per person.';
+    await callClaude(prompt, 'meal-output');
+  }
+
+  // ── Log meal ──
+  async function logMeal() {
+    const dish = document.getElementById('cooked-input').value.trim();
+    if (!dish) { showToast('Enter a dish name', 'error'); return; }
+
+    const qty        = document.getElementById('cooked-qty').value.trim();
+    const mealSource = getSelected('meal-source-pills') || 'Home cooked';
+    const isHome     = mealSource === 'Home cooked';
+    const now        = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+    const today      = new Date().toISOString().split('T')[0];
+
+    // Who ate this
+    const eaters = [...document.querySelectorAll('#log-member-pills .pill.selected')].map(p => p.textContent);
+    if (eaters.length === 0) { showToast('Select who ate this', 'error'); return; }
+
+    // Log for each member
+    for (const member of eaters) {
+      const entry = { dish, qty, mealType: mealSource, loggedBy: member, date: today, time: now };
+      mealLog.unshift({ dish, time: now, date: today, loggedBy: member });
+      await sheetPost({ action: 'logMeal', mealName: dish + (qty ? ' (' + qty + ')' : ''), mealType: mealSource, loggedBy: member, notes: qty || '' });
+    }
+
+    document.getElementById('cooked-input').value = '';
+    document.getElementById('cooked-qty').value   = '';
+    renderLog();
+    showToast('Logged for ' + eaters.join(', ') + ' ✓', 'success');
+
+    // If home meal — ask Claude to estimate inventory usage and show editable result
+    if (isHome) {
+      const aiBox = document.getElementById('meal-log-ai');
+      aiBox.style.display = 'block';
+      const qtyNote = qty ? 'Quantity consumed: ' + qty + '.' : 'Quantity not specified, estimate a standard serving.';
+      const prompt = 'Dish logged: "' + dish + '". ' + qtyNote + ' Kitchen inventory: ' + getInventoryText() + '. Estimate which ingredients were used and how much for ' + eaters.length + ' people. List each ingredient on a new line as: INGREDIENT_NAME: QUANTITY_USED. Then on a new line write LIKELY_LOW: followed by items running low. Keep it concise and practical.';
+      await callClaude(prompt, 'meal-log-ai');
+
+      // Parse Claude response and show editable deduction UI
+      const responseText = document.getElementById('meal-log-ai').textContent;
+      showInventoryDeductionUI(responseText, dish);
+    }
+  }
+
+  function showInventoryDeductionUI(claudeResponse, dish) {
+    const lines = claudeResponse.split('\n');
+    const ingredients = [];
+    for (const line of lines) {
+      if (line.includes(':') && !line.startsWith('LIKELY') && !line.startsWith('ORDER')) {
+        const parts = line.split(':');
+        if (parts.length >= 2) {
+          ingredients.push({ name: parts[0].trim(), qty: parts[1].trim() });
+        }
+      }
+    }
+    if (ingredients.length === 0) return;
+
+    let html = '<div class="card" style="margin-top:1rem;"><div class="label">Review & confirm inventory deduction</div>';
+    html += '<div style="font-size:12px;color:var(--text2);margin-bottom:10px;">Edit quantities if needed, then confirm to update inventory.</div>';
+    ingredients.forEach((ing, i) => {
+      html += '<div class="add-row" style="margin-bottom:6px;">';
+      html += '<input type="text" value="' + ing.name + '" id="ded-name-' + i + '" style="flex:2;" />';
+      html += '<input type="text" value="' + ing.qty + '" id="ded-qty-' + i + '" style="flex:1;" />';
+      html += '</div>';
+    });
+    html += '<button class="btn btn-primary btn-full" style="margin-top:8px;" onclick="confirmDeduction(' + ingredients.length + ')">Confirm & update inventory</button>';
+    html += '</div>';
+
+    const container = document.getElementById('meal-log-ai');
+    container.innerHTML = html;
+    container.className = 'ai-box';
+  }
+
+  async function confirmDeduction(count) {
+    let deducted = 0;
+    for (let i = 0; i < count; i++) {
+      const nameEl = document.getElementById('ded-name-' + i);
+      const qtyEl  = document.getElementById('ded-qty-' + i);
+      if (!nameEl || !qtyEl) continue;
+      const name = nameEl.value.trim();
+      const qty  = qtyEl.value.trim();
+      if (!name) continue;
+
+      // Find and remove/reduce in local inventory
+      const idx = inventory.findIndex(item => item.name.toLowerCase().includes(name.toLowerCase()));
+      if (idx >= 0) {
+        inventory.splice(idx, 1);
+        await sheetPost({ action: 'removeInventoryItem', item: inventory[idx]?.name || name });
+        deducted++;
+      }
+    }
+    renderInventory();
+    document.getElementById('meal-log-ai').style.display = 'none';
+    showToast('Inventory updated ✓', 'success');
+  }
+
+  function renderLog() {
+    const el = document.getElementById('meal-log');
+    if (mealLog.length === 0) { el.innerHTML = ''; return; }
+    el.innerHTML = '<div class="label" style="margin-top:1rem;">Recent meals</div>' +
+      mealLog.slice(0, 5).map(e =>
+        '<div class="log-item"><span>' + e.dish + ' <span style="font-size:11px;color:var(--text3);">by ' + (e.loggedBy||'App') + '</span></span><span class="log-time">' + e.date + '</span></div>'
+      ).join('');
+  }
+
+  // ── Shopping ──
+  async function getShoppingList() {
+    const dur  = getSelected('duration-pills') || '3 days';
+    const note = document.getElementById('shop-note').value;
+    const m    = personMacros[0];
+    const prompt = 'Grocery planner for 3 men in Gurugram doing body recomposition. Diet: veg + eggs + occasional chicken. Target per person: ~' + m.protein + 'g protein, ~' + m.cal + ' kcal/day. Current inventory (already have): ' + getInventoryText() + '. Generate a shopping list for ' + dur + ' for 3 people, to order on Blinkit or Zepto. Constraints: ' + (note||'none') + '. Format as: PROTEINS, VEGETABLES & FRUITS, GRAINS & CARBS, DAIRY & EGGS, PANTRY, SUPPLEMENTS - each with items and quantities. Skip items already in inventory unless running low. Use Indian quantities and realistic Blinkit/Zepto product sizes.';
+    await callClaude(prompt, 'shop-output');
+  }
+
+  async function copyList() {
+    const text = document.getElementById('shop-output').textContent;
+    if (!text || text.includes('appear here') || text.includes('Thinking')) return;
+    navigator.clipboard.writeText(text).then(() => {
+      const f = document.getElementById('copy-flash');
+      f.style.display = 'inline';
+      setTimeout(() => f.style.display = 'none', 2500);
+    });
+    const lines = text.split('\n').filter(l => l.trim() && !l.includes(':'));
+    if (lines.length > 0) {
+      await sheetPost({ action: 'saveGroceryOrder', items: lines.map(l => ({ item: l.trim(), quantity: '—' })), orderedBy: currentUser, appName: 'Blinkit' });
+      showToast('List saved to Sheet ✓', 'success');
+    }
+  }
+
+  // ── Macros ──
+  function switchPerson(btn, idx) {
+    document.querySelectorAll('.person-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentPerson = idx;
+    currentUser   = personMacros[idx].person;
+    updateMacroDisplay();
+  }
+
+  function updateMacroDisplay() {
+    const m = personMacros[currentPerson];
+    document.getElementById('m-cal').textContent     = m.cal;
+    document.getElementById('m-protein').textContent = m.protein + 'g';
+    document.getElementById('m-carbs').textContent   = m.carbs + 'g';
+    document.getElementById('m-fat').textContent     = m.fat + 'g';
+    if (document.getElementById('m-fiber')) document.getElementById('m-fiber').textContent = (m.fiber || 30) + 'g';
+    if (m.weight) { document.getElementById('weight-slider').value = m.weight; document.getElementById('weight-val').textContent = m.weight + ' kg'; }
+  }
+
+  async function updateMacros() {
+    const w = parseInt(document.getElementById('weight-slider').value);
+    const g = parseInt(document.getElementById('goal-slider').value);
+    document.getElementById('weight-val').textContent = w + ' kg';
+    document.getElementById('goal-val').textContent   = g < 33 ? 'Cut (fat loss)' : g > 66 ? 'Bulk (muscle)' : 'Balanced';
+    const calOffset = g < 33 ? -250 : g > 66 ? 200 : 0;
+    const cal     = Math.round(w * 26 + calOffset);
+    const protein = Math.round(w * 2);
+    const fat     = Math.round(w * 0.7);
+    const carbs   = Math.max(Math.round((cal - protein * 4 - fat * 9) / 4), 80);
+    const fiber = Math.round(w * 0.4);
+    personMacros[currentPerson] = { ...personMacros[currentPerson], cal, protein, carbs, fat, fiber, weight: w };
+    updateMacroDisplay();
+    const res = await sheetPost({ action: 'updateMacros', person: personMacros[currentPerson].person, calories: cal, protein, carbs, fat, fiber, weight: w });
+    if (res && res.success) showToast('Macros saved ✓', 'success');
+  }
+
+  async function askFullDayPlan() {
+    const m = personMacros[currentPerson];
+    const prompt = 'Suggest a full day meal plan for body recomposition for a 25-year-old man in Gurugram, India who gyms 3-4x/week. Diet: vegetarian + eggs + occasional boneless chicken. Daily targets: ' + m.cal + ' kcal, ' + m.protein + 'g protein, ' + m.carbs + 'g carbs, ' + m.fat + 'g fat. Include: breakfast, lunch, post-workout snack, dinner. For each meal give the dish name, ingredients, estimated macros, and simple cooking notes. Keep it practical for a home maid to cook. Use common Indian ingredients available on Blinkit/Zepto.';
+    await callClaude(prompt, 'plan-output');
+  }
+
+  // ── Member toggle for meals ──
+  function toggleMember(btn, name) {
+    btn.classList.toggle('selected');
+    if (btn.classList.contains('selected')) {
+      if (!eatingMembers.includes(name)) eatingMembers.push(name);
+    } else {
+      eatingMembers = eatingMembers.filter(m => m !== name);
+    }
+  }
+
+  // ── Bulk add inventory ──
+  async function bulkAdd() {
+    const raw = document.getElementById('bulk-input').value.trim();
+    if (!raw) return;
+
+    // Parse: handle both newline and comma+newline separated
+    const lines = raw.split(/\n/).map(l => l.trim()).filter(l => l);
+    let added = 0;
+    for (const line of lines) {
+      // Try "item, qty" or "item qty" format
+      const parts = line.split(/,(.+)/).map(p => p.trim()).filter(p => p);
+      const name = parts[0];
+      const qty  = parts[1] || '—';
+      if (!name) continue;
+      if (inventory.find(i => i.name.toLowerCase() === name.toLowerCase())) continue;
+      inventory.push({ name, qty, updatedBy: currentUser });
+      added++;
+      await sheetPost({ action: 'addInventoryItem', item: name, quantity: qty, updatedBy: currentUser });
+    }
+    document.getElementById('bulk-input').value = '';
+    renderInventory();
+    showToast(added + ' items added to inventory ✓', 'success');
+  }
+
+  // ── User selection ──
+  function selectUser(name, idx) {
+    currentUser   = name;
+    currentPerson = idx;
+    localStorage.setItem('ntos_user', name);
+    document.getElementById('user-modal').style.display = 'none';
+    updateMacroDisplay();
+    showToast('Welcome, ' + name + '!', 'success');
+  }
+
+  // ── Profile & Progress ──
+  let profileMealLog = []; // meals for currently viewed date+person
+
+  function initProgressDate() {
+    const today = new Date().toISOString().split('T')[0];
+    document.getElementById('progress-date').value = today;
+  }
+
+  async function loadDayProgress() {
+    const date   = document.getElementById('progress-date').value;
+    const person = personMacros[currentPerson].person;
+    const target = personMacros[currentPerson];
+
+    // Filter meal log for this person + date
+    const dayMeals = mealLog.filter(m => m.loggedBy === person && m.date && m.date.startsWith(date));
+    profileMealLog = dayMeals;
+    renderProfileMeals(dayMeals);
+
+    // Ask Claude to estimate macros for the day's meals
+    if (dayMeals.length === 0) {
+      updateProgressBars(0, 0, 0, target);
+      return;
+    }
+
+    const mealList = dayMeals.map(m => m.dish).join(', ');
+    const prompt = 'Estimate total daily macros for these meals eaten by ' + person + ': ' + mealList + '. Return ONLY a JSON object with keys: protein (grams), calories (kcal), carbs (grams), fat (grams), fiber (grams). No explanation, just the JSON object.';
+
+    try {
+      const resp = await fetch('/api/claude', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: MODEL, max_tokens: 200, messages: [{ role: 'user', content: prompt }] })
+      });
+      const text_raw = await resp.text();
+      const data = JSON.parse(text_raw);
+      const text = data.content?.map(b => b.text || '').join('') || '{}';
+      const clean = text.replace(/```json|```/g, '').trim();
+      const macros = JSON.parse(clean);
+      updateProgressBars(macros.protein || 0, macros.calories || 0, macros.carbs || 0, macros.fiber || 0, target);
+    } catch(e) {
+      console.log('Macro estimation error:', e);
+      updateProgressBars(0, 0, 0, 0, target);
+    }
+  }
+
+  function updateProgressBars(protein, cal, carbs, fiber, target) {
+    const pPct    = Math.min(Math.round((protein || 0) / target.protein * 100), 100);
+    const cPct    = Math.min(Math.round((cal || 0) / target.cal * 100), 100);
+    const carbPct = Math.min(Math.round((carbs || 0) / target.carbs * 100), 100);
+    const fatPct  = Math.min(Math.round((fiber || 0) / (target.fat || 55) * 100), 100);
+    const fibPct  = Math.min(Math.round((fiber || 0) / (target.fiber || 30) * 100), 100);
+
+    document.getElementById('prog-protein-bar').style.width = pPct + '%';
+    document.getElementById('prog-cal-bar').style.width     = cPct + '%';
+    document.getElementById('prog-carbs-bar').style.width   = carbPct + '%';
+    document.getElementById('prog-fat-bar').style.width     = fatPct + '%';
+    document.getElementById('prog-fiber-bar').style.width   = fibPct + '%';
+
+    document.getElementById('prog-protein-label').textContent = Math.round(protein||0) + ' / ' + target.protein + 'g';
+    document.getElementById('prog-cal-label').textContent     = Math.round(cal||0) + ' / ' + target.cal + ' kcal';
+    document.getElementById('prog-carbs-label').textContent   = Math.round(carbs||0) + ' / ' + target.carbs + 'g';
+    document.getElementById('prog-fat-label').textContent     = Math.round(fiber||0) + ' / ' + (target.fat||55) + 'g';
+    document.getElementById('prog-fiber-label').textContent   = Math.round(fiber||0) + ' / ' + (target.fiber||30) + 'g';
+  }
+
+  function renderProfileMeals(meals) {
+    const el = document.getElementById('profile-meal-log');
+    if (!meals || meals.length === 0) {
+      el.innerHTML = '<span style="color:var(--text3);">No meals logged for this date.</span>';
+      return;
+    }
+    el.innerHTML = meals.map(m =>
+      '<div class="log-item"><span>' + m.dish + ' <span style="font-size:11px;color:var(--text3);">' + (m.mealType || 'Home cooked') + '</span></span><span class="log-time">' + (m.time || m.date) + '</span></div>'
+    ).join('');
+  }
+
+  async function getMealBreakdown() {
+    const date   = document.getElementById('progress-date').value;
+    const person = personMacros[currentPerson].person;
+    const dayMeals = mealLog.filter(m => m.loggedBy === person && m.date && m.date.startsWith(date));
+
+    if (dayMeals.length === 0) { showToast('No meals logged for this date', 'error'); return; }
+
+    const el = document.getElementById('breakdown-output');
+    el.style.display = 'block';
+    el.className = 'ai-box loading';
+    el.innerHTML = '<span class="loading-dots">Analysing</span>';
+
+    const mealList = dayMeals.map(m => m.dish).join(', ');
+    const target   = personMacros[currentPerson];
+    const prompt   = 'Give a detailed macro breakdown for ' + person + ' who ate these meals today: ' + mealList + '. For each meal estimate: protein, carbs, fat, calories. Then give a daily total and compare to their targets (' + target.protein + 'g protein, ' + target.cal + ' kcal, ' + target.carbs + 'g carbs, ' + target.fat + 'g fat). Note what macros are missing or exceeded and give one practical suggestion for the next meal to balance the day.';
+
+    await callClaude(prompt, 'breakdown-output');
+    el.style.display = 'block';
+  }
+
+  // ── Update getMealSuggestions to highlight previously cooked meals ──
+  function getPreviouslyCooked() {
+    const recent = mealLog.slice(0, 20).map(m => m.dish);
+    return [...new Set(recent)].slice(0, 5);
+  }
+
+  // ── Init ──
+  renderInventory();
+  renderLog();
+  updateMacroDisplay();
+  initProgressDate();
+  const savedUser = localStorage.getItem('ntos_user');
+  if (savedUser) {
+    const idx = personMacros.findIndex(m => m.person === savedUser);
+    if (idx >= 0) { currentUser = savedUser; currentPerson = idx; updateMacroDisplay(); }
+    document.getElementById('user-modal').style.display = 'none';
+    syncAll().then(() => loadDayProgress());
+  } else {
+    syncAll().then(() => loadDayProgress());
+  }
+</script>
+
+</body>
+</html>
