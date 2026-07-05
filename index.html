@@ -1622,11 +1622,8 @@
   document.getElementById('label-input')?.addEventListener('change', scanNutritionLabel);
   document.getElementById('dish-input')?.addEventListener('change', scanDish);
   document.getElementById('fridge-input')?.addEventListener('change', scanInventory);
-  document.getElementById('order-input')?.addEventListener('change', scanOrder); else {
-    syncAll().then(() => loadDayProgress());
-  }
+  document.getElementById('order-input')?.addEventListener('change', scanOrder);
 
-  // ── File input handlers ──
   document.getElementById('label-input')?.addEventListener('change', scanNutritionLabel);
   document.getElementById('dish-input')?.addEventListener('change', scanDish);
   document.getElementById('fridge-input')?.addEventListener('change', scanInventory);
