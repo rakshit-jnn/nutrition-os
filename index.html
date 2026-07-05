@@ -435,9 +435,7 @@
       Get meal suggestions based on inventory →
     </button>
 
-        <button class="btn btn-primary btn-full" onclick="switchTab('meals', document.querySelectorAll('.tab')[1])">
-      Get meal suggestions based on inventory →
-    </button>
+        
   </div>
 
   <!-- ── MEALS ── -->
@@ -1183,14 +1181,7 @@
   }
 
   // ── User selection ──
-  function selectUser(name, idx) {
-    currentUser   = name;
-    currentPerson = idx;
-    localStorage.setItem('ntos_user', name);
-    document.getElementById('user-modal').style.display = 'none';
-    updateMacroDisplay();
-    showToast('Welcome, ' + name + '!', 'success');
-  }
+  
 
   // ── Vision / Image Scanning ──
   function fileToBase64(file) {
@@ -1611,12 +1602,16 @@
   if (currentPerson < personMacros.length) renderCurrentPrefs();
   renderMembersList();
   const savedUser = localStorage.getItem('ntos_user');
+  const userModal = document.getElementById('user-modal');
   if (savedUser) {
     const idx = personMacros.findIndex(m => m.person === savedUser);
     if (idx >= 0) { currentUser = savedUser; currentPerson = idx; updateMacroDisplay(); }
-    document.getElementById('user-modal').style.display = 'none';
+    if (userModal) userModal.style.display = 'none';
+    syncAll().then(() => loadDayProgress());
+  } else {
+    // No saved user - show modal
+    if (userModal) userModal.style.display = 'flex';
   }
-  syncAll().then(() => loadDayProgress());
 
   // ── File input handlers ──
   document.getElementById('label-input')?.addEventListener('change', scanNutritionLabel);
