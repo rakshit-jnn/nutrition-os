@@ -413,7 +413,29 @@
       <button class="btn btn-primary btn-full" onclick="bulkAdd()">Add all items to inventory</button>
     </div>
 
+    <div class="card">
+      <div class="label">Scan & add from photos</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:10px;">Snap a photo instead of typing items manually.</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+        <div>
+          <div style="font-size:11px;color:var(--text2);margin-bottom:4px;">Fridge contents</div>
+          <input type="file" id="fridge-input" accept="image/*" capture="environment" style="display:none;" />
+          <button class="btn btn-sm btn-full" onclick="document.getElementById('fridge-input').click()">📷 Fridge photo</button>
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--text2);margin-bottom:4px;">Order screenshot</div>
+          <input type="file" id="order-input" accept="image/*" style="display:none;" />
+          <button class="btn btn-sm btn-full" onclick="document.getElementById('order-input').click()">📸 Order SS</button>
+        </div>
+      </div>
+      <div id="inv-vision-output" style="display:none;margin-bottom:10px;"></div>
+    </div>
+
     <button class="btn btn-primary btn-full" onclick="switchTab('meals', document.querySelectorAll('.tab')[1])">
+      Get meal suggestions based on inventory →
+    </button>
+
+        <button class="btn btn-primary btn-full" onclick="switchTab('meals', document.querySelectorAll('.tab')[1])">
       Get meal suggestions based on inventory →
     </button>
   </div>
@@ -483,6 +505,25 @@
       <button class="btn btn-primary btn-full" onclick="logMeal()">Log meal</button>
     </div>
 
+    <!-- Scan packaged food label -->
+    <div class="card">
+      <div class="label">Or scan a photo</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:10px;">Take a photo of a packaged product nutrition label or a plate of food to auto-log macros.</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+        <div>
+          <div style="font-size:11px;color:var(--text2);margin-bottom:4px;">Nutrition label</div>
+          <input type="file" id="label-input" accept="image/*" capture="environment" style="display:none;" />
+          <button class="btn btn-sm btn-full" onclick="document.getElementById('label-input').click()">📷 Scan label</button>
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--text2);margin-bottom:4px;">Dish photo</div>
+          <input type="file" id="dish-input" accept="image/*" capture="environment" style="display:none;" />
+          <button class="btn btn-sm btn-full" onclick="document.getElementById('dish-input').click()">🍽️ Scan dish</button>
+        </div>
+      </div>
+      <div id="meal-vision-output" style="display:none;margin-top:10px;"></div>
+    </div>
+
     <div id="meal-log"></div>
     <div class="ai-box empty" id="meal-log-ai" style="margin-top:1rem;display:none;"></div>
   </div>
@@ -543,7 +584,24 @@
       </div>
     </div>
 
+    <!-- Member Preferences -->
+    <div class="card" style="margin-bottom:1rem;border:0.5px solid var(--green-text);">
+      <div class="label">Your preferences</div>
+      <div id="current-prefs" style="font-size:13px;line-height:1.8;color:var(--text2);"></div>
+      <button class="btn btn-sm" onclick="editPreferences()" style="margin-top:8px;">Edit preferences</button>
+      <div id="prefs-edit" style="display:none;margin-top:10px;"></div>
+    </div>
+
+    <!-- Manage Members -->
+    <div class="card" style="margin-bottom:1rem;">
+      <div class="label">Household members</div>
+      <div id="members-list" style="margin-bottom:10px;"></div>
+      <button class="btn btn-sm" onclick="showAddMemberUI()">+ Add new member</button>
+      <div id="add-member-form" style="display:none;margin-top:10px;"></div>
+    </div>
+
     <!-- Macro targets -->
+    <div class="card">    <!-- Macro targets -->
     <div class="card">
       <div class="label">Daily macro targets</div>
       <div class="grid-4" style="margin-top:8px;">
@@ -628,7 +686,47 @@
     <div class="ai-box empty" id="plan-output" style="margin-top:1rem;display:none;"></div>
   </div>
 
-</main>
+  <!-- ── SCAN (Vision) ── -->
+  <div id="tab-scan" class="section">
+    <div class="sec-title">Scan & Auto-log</div>
+    <div class="sec-sub">Use your camera to scan nutrition labels, fridge contents, and orders.</div>
+
+    <!-- Nutrition Label Scanner -->
+    <div class="card">
+      <div class="label">Scan packaged food label</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:10px;">Take a photo of the nutrition info panel on the back of any packaged product.</div>
+      <input type="file" id="label-input" accept="image/*" capture="environment" style="margin-bottom:8px;display:block;width:100%;" />
+      <button class="btn btn-primary btn-full" onclick="scanNutritionLabel()">Scan nutrition label</button>
+      <div class="ai-box empty" id="label-output" style="margin-top:1rem;display:none;"></div>
+      <div id="label-confirm" style="display:none;margin-top:1rem;"></div>
+    </div>
+
+    <!-- Inventory Photo Scanner -->
+    <div class="card">
+      <div class="label">Scan fridge or delivery bag</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:10px;">Take a photo of items in your fridge, or fresh delivery bag contents.</div>
+      <input type="file" id="inventory-input" accept="image/*" capture="environment" style="margin-bottom:8px;display:block;width:100%;" />
+      <button class="btn btn-primary btn-full" onclick="scanInventory()">Identify items</button>
+      <div class="ai-box empty" id="inventory-output" style="margin-top:1rem;display:none;"></div>
+      <div id="inventory-confirm" style="display:none;margin-top:1rem;"></div>
+    </div>
+
+    <!-- Order Screenshot Scanner -->
+    <div class="card">
+      <div class="label">Scan Blinkit / Zepto / Swiggy order</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:10px;">Screenshot your order confirmation. We'll extract items, quantities, and prices.</div>
+      <input type="file" id="order-input" accept="image/*" style="margin-bottom:8px;display:block;width:100%;" />
+      <button class="btn btn-primary btn-full" onclick="scanOrder()">Parse order</button>
+      <div class="ai-box empty" id="order-output" style="margin-top:1rem;display:none;"></div>
+      <div id="order-confirm" style="display:none;margin-top:1rem;"></div>
+    </div>
+
+    <div style="font-size:12px;color:var(--text3);margin-top:1.5rem;padding:10px;background:var(--surface2);border-radius:var(--radius);">
+      💡 <strong>Tip:</strong> Clear, well-lit photos work best. Make sure text is readable. Each scan uses your API credits (~$0.01-0.05 per image).
+    </div>
+  </div>
+
+  </main>
 
 <script>
   // ── Config ──
@@ -648,37 +746,47 @@
   let currentUser   = 'Rakshit';
 
   // ── IST Date/Time Helper ──
-  function getISTNow() {
-    const now = new Date();
-    return new Date(now.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }));
-  }
   function getISTToday() {
-    return getISTNow().toISOString().split('T')[0];
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      timeZone: 'Asia/Kolkata'
+    });
+    return formatter.format(new Date());
   }
   function getISTDatetime() {
-    return new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'short' });
+    const formatter = new Intl.DateTimeFormat('en-IN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+      timeZone: 'Asia/Kolkata'
+    });
+    return formatter.format(new Date());
   }
 
-  const memberProfiles = {
-    Rakshit: {
-      diet: 'Mostly vegetarian, eats egg whites and boneless chicken dishes',
-      likes: 'Spicy and masaledar food, salads with tasty dressing, nothing boring',
-      dislikes: 'Bland food',
-      allergies: 'None'
-    },
-    Madhav: {
-      diet: 'Non-vegetarian, prefers chicken and eggs over vegetables',
-      likes: 'Chole, Rajma, Paneer, Tofu, Soya, Eggs, Chicken, Roti, Rice',
-      dislikes: 'Most vegetables, leafy greens, onion',
-      allergies: 'None'
-    },
-    Sanyam: {
-      diet: 'Pure vegetarian',
-      likes: 'Most vegetables, medium spice, varied dishes',
-      dislikes: 'Boring dishes like aloo jeera, overly simple food',
-      allergies: 'None'
+  let memberProfiles = {};
+  
+  function initMemberProfiles() {
+    const saved = localStorage.getItem('ntos_members');
+    if (saved) {
+      memberProfiles = JSON.parse(saved);
+    } else {
+      memberProfiles = {
+        Rakshit: { diet: 'Mostly vegetarian, eats egg whites and boneless chicken dishes', likes: 'Spicy and masaledar food, salads with tasty dressing, nothing boring', dislikes: 'Bland food', allergies: 'None' },
+        Madhav: { diet: 'Non-vegetarian, prefers chicken and eggs over vegetables', likes: 'Chole, Rajma, Paneer, Tofu, Soya, Eggs, Chicken, Roti, Rice', dislikes: 'Most vegetables, leafy greens, onion', allergies: 'None' },
+        Sanyam: { diet: 'Pure vegetarian', likes: 'Most vegetables, medium spice, varied dishes', dislikes: 'Boring dishes like aloo jeera, overly simple food', allergies: 'None' }
+      };
+      saveMemberProfiles();
     }
-  };
+  }
+  
+  function saveMemberProfiles() {
+    localStorage.setItem('ntos_members', JSON.stringify(memberProfiles));
+  }
 
   let eatingMembers = ['Rakshit', 'Madhav', 'Sanyam']; // who is eating this meal
 
@@ -989,6 +1097,8 @@
     currentPerson = idx;
     currentUser   = personMacros[idx].person;
     updateMacroDisplay();
+    renderCurrentPrefs();
+    loadDayProgress();
   }
 
   function updateMacroDisplay() {
@@ -1066,6 +1176,212 @@
     document.getElementById('user-modal').style.display = 'none';
     updateMacroDisplay();
     showToast('Welcome, ' + name + '!', 'success');
+  }
+
+  // ── Vision / Image Scanning ──
+  function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64 = reader.result.split(',')[1];
+        resolve(base64);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function callVision(taskType, imageBase64, outputEl) {
+    outputEl.className = 'ai-box loading';
+    outputEl.innerHTML = '<span class="loading-dots">Scanning image</span>';
+
+    try {
+      const resp = await fetch('/api/vision', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageBase64, taskType })
+      });
+      const data = await resp.json();
+      if (data.error) throw new Error(data.error);
+      
+      outputEl.className = 'ai-box';
+      outputEl.innerHTML = '<strong>Extracted:</strong><br>' + JSON.stringify(data.data, null, 2).substring(0, 200) + '...';
+      return data.data;
+    } catch(e) {
+      outputEl.className = 'ai-box';
+      outputEl.innerHTML = '<strong>Error:</strong><br>' + e.message;
+      return null;
+    }
+  }
+
+  async function scanNutritionLabel() {
+    const file = document.getElementById('label-input').files[0];
+    if (!file) { showToast('Select an image', 'error'); return; }
+
+    const base64 = await fileToBase64(file);
+    const outputEl = document.getElementById('meal-vision-output');
+    outputEl.style.display = 'block';
+    const data = await callVision('nutrition-label', base64, outputEl);
+    if (!data) return;
+
+    // Show confirmation UI
+    let html = '<div class="card"><div class="label">Nutrition facts</div>';
+    html += '<table style="width:100%;font-size:13px;margin-bottom:10px;"><tr style="border-bottom:0.5px solid var(--border);"><td>Protein</td><td style="text-align:right;"><input type="number" id="label-protein" value="' + (data.protein || 0) + '" style="width:70px;" /></td><td>g</td></tr>';
+    html += '<tr style="border-bottom:0.5px solid var(--border);"><td>Calories</td><td style="text-align:right;"><input type="number" id="label-cal" value="' + (data.calories || 0) + '" style="width:70px;" /></td><td>kcal</td></tr>';
+    html += '<tr style="border-bottom:0.5px solid var(--border);"><td>Carbs</td><td style="text-align:right;"><input type="number" id="label-carbs" value="' + (data.carbs || 0) + '" style="width:70px;" /></td><td>g</td></tr>';
+    html += '<tr style="border-bottom:0.5px solid var(--border);"><td>Fat</td><td style="text-align:right;"><input type="number" id="label-fat" value="' + (data.fat || 0) + '" style="width:70px;" /></td><td>g</td></tr>';
+    html += '<tr><td>Fiber</td><td style="text-align:right;"><input type="number" id="label-fiber" value="' + (data.fiber || 0) + '" style="width:70px;" /></td><td>g</td></tr></table>';
+    html += '<button class="btn btn-primary btn-sm" onclick="logNutritionToProfile()">Log to my profile</button></div>';
+    outputEl.innerHTML = html;
+  }
+
+  function logNutritionToProfile() {
+    const protein = parseFloat(document.getElementById('label-protein').value) || 0;
+    const cal = parseFloat(document.getElementById('label-cal').value) || 0;
+    const carbs = parseFloat(document.getElementById('label-carbs').value) || 0;
+    const fat = parseFloat(document.getElementById('label-fat').value) || 0;
+    const fiber = parseFloat(document.getElementById('label-fiber').value) || 0;
+
+    const person = personMacros[currentPerson].person;
+    const date = getISTToday();
+    
+    // Log as a meal
+    mealLog.unshift({ dish: 'Packaged food (scanned)', time: getISTDatetime(), date, loggedBy: person, source: 'packaged', macros: {protein, cal, carbs, fat, fiber} });
+    sheetPost({ action: 'logMeal', mealName: 'Packaged food (scanned)', mealType: 'Outside', loggedBy: person, notes: JSON.stringify({protein, cal, carbs, fat, fiber}) });
+    
+    showToast('Logged ' + protein + 'g protein to ' + person + '\'s profile ✓', 'success');
+    document.getElementById('label-input').value = '';
+    document.getElementById('meal-vision-output').style.display = 'none';
+    loadDayProgress();
+  }
+
+  async function scanInventory() {
+    const file = document.getElementById('fridge-input').files[0];
+    if (!file) { showToast('Select a photo', 'error'); return; }
+
+    const base64 = await fileToBase64(file);
+    const outputEl = document.getElementById('inv-vision-output');
+    outputEl.style.display = 'block';
+    const data = await callVision('inventory-photo', base64, outputEl);
+    if (!data || !data.items) return;
+
+    // Show editable confirmation
+    let html = '<div class="card"><div class="label">Items found</div>';
+    data.items.forEach((item, i) => {
+      html += '<div class="add-row" style="margin-bottom:6px;"><input type="text" value="' + item.name + '" id="inv-name-' + i + '" style="flex:2;" /><input type="text" value="' + item.quantity + '" id="inv-qty-' + i + '" style="flex:1;" /></div>';
+    });
+    html += '<button class="btn btn-primary btn-sm" style="margin-top:8px;" onclick="confirmInventoryScan(' + data.items.length + ')">Add to inventory</button></div>';
+    outputEl.innerHTML = html;
+  }
+
+  async function confirmInventoryScan(count) {
+    for (let i = 0; i < count; i++) {
+      const name = document.getElementById('inv-name-' + i).value.trim();
+      const qty = document.getElementById('inv-qty-' + i).value.trim();
+      if (!name) continue;
+      inventory.push({ name, qty, updatedBy: currentUser });
+      await sheetPost({ action: 'addInventoryItem', item: name, quantity: qty, updatedBy: currentUser });
+    }
+    renderInventory();
+    showToast('Inventory updated ✓', 'success');
+    document.getElementById('fridge-input').value = '';
+    document.getElementById('inv-vision-output').style.display = 'none';
+  }
+
+  async function scanOrder() {
+    const file = document.getElementById('order-input').files[0];
+    if (!file) { showToast('Select a screenshot', 'error'); return; }
+
+    const base64 = await fileToBase64(file);
+    const outputEl = document.getElementById('inv-vision-output');
+    outputEl.style.display = 'block';
+    const data = await callVision('order-screenshot', base64, outputEl);
+    if (!data || !data.items) return;
+
+    // Show editable confirmation
+    let html = '<div class="card"><div class="label">Order items</div>';
+    let totalCost = 0;
+    data.items.forEach((item, i) => {
+      const price = parseFloat(item.price) || 0;
+      totalCost += price;
+      html += '<div style="display:flex;gap:6px;margin-bottom:6px;align-items:center;"><input type="text" value="' + item.name + '" id="order-name-' + i + '" style="flex:2;font-size:12px;" /><input type="text" value="' + item.quantity + '" id="order-qty-' + i + '" style="flex:1;font-size:12px;" /><input type="number" value="' + price + '" id="order-price-' + i + '" style="width:60px;font-size:12px;" /></div>';
+    });
+    html += '<div style="font-size:12px;padding:8px;background:var(--surface2);border-radius:var(--radius);margin-bottom:10px;"><strong>Total: ₹' + totalCost.toFixed(0) + '</strong></div>';
+    html += '<button class="btn btn-primary btn-sm" style="margin-top:8px;" onclick="confirmOrderScan(' + data.items.length + ')">Add to inventory</button></div>';
+    outputEl.innerHTML = html;
+  }
+
+  async function confirmOrderScan(count) {
+    const date = getISTToday();
+    for (let i = 0; i < count; i++) {
+      const name = document.getElementById('order-name-' + i).value.trim();
+      const qty = document.getElementById('order-qty-' + i).value.trim();
+      const price = parseFloat(document.getElementById('order-price-' + i).value) || 0;
+      if (!name) continue;
+      
+      inventory.push({ name, qty, updatedBy: currentUser, price, dateAdded: date });
+      await sheetPost({ action: 'addInventoryItem', item: name, quantity: qty, updatedBy: currentUser, price, dateAdded: date });
+    }
+    renderInventory();
+    showToast('Order items added ✓', 'success');
+    document.getElementById('order-input').value = '';
+    document.getElementById('inv-vision-output').style.display = 'none';
+  }
+
+
+  async function scanDish() {
+    const file = document.getElementById('dish-input').files[0];
+    if (!file) { showToast('Select a photo', 'error'); return; }
+
+    const base64 = await fileToBase64(file);
+    const outputEl = document.getElementById('meal-vision-output');
+    outputEl.style.display = 'block';
+    const data = await callVision('dish-recognition', base64, outputEl);
+    if (!data) return;
+
+    // Show editable UI for dish components and macros
+    let html = '<div class="card"><div class="label">Dish identified: ' + (data.dish_name || 'Mixed meal') + '</div>';
+    html += '<div style="font-size:12px;color:var(--text2);margin-bottom:10px;">Edit components and estimated macros below</div>';
+    
+    if (data.components && data.components.length > 0) {
+      html += '<div style="margin-bottom:10px;"><strong>Components:</strong>';
+      data.components.forEach((comp, i) => {
+        html += '<div style="display:flex;gap:6px;margin-bottom:6px;"><input type="text" value="' + comp + '" id="dish-comp-' + i + '" style="flex:1;" /></div>';
+      });
+      html += '</div>';
+    }
+    
+    html += '<table style="width:100%;font-size:13px;margin-bottom:10px;"><tr style="border-bottom:0.5px solid var(--border);"><td>Protein</td><td style="text-align:right;"><input type="number" id="dish-protein" value="' + (data.protein || 0) + '" style="width:70px;" /></td><td>g</td></tr>';
+    html += '<tr style="border-bottom:0.5px solid var(--border);"><td>Calories</td><td style="text-align:right;"><input type="number" id="dish-cal" value="' + (data.calories || 0) + '" style="width:70px;" /></td><td>kcal</td></tr>';
+    html += '<tr style="border-bottom:0.5px solid var(--border);"><td>Carbs</td><td style="text-align:right;"><input type="number" id="dish-carbs" value="' + (data.carbs || 0) + '" style="width:70px;" /></td><td>g</td></tr>';
+    html += '<tr style="border-bottom:0.5px solid var(--border);"><td>Fat</td><td style="text-align:right;"><input type="number" id="dish-fat" value="' + (data.fat || 0) + '" style="width:70px;" /></td><td>g</td></tr>';
+    html += '<tr><td>Fiber</td><td style="text-align:right;"><input type="number" id="dish-fiber" value="' + (data.fiber || 0) + '" style="width:70px;" /></td><td>g</td></tr></table>';
+    html += '<button class="btn btn-primary btn-sm" onclick="logDishToProfile()">Log meal</button></div>';
+    outputEl.innerHTML = html;
+  }
+
+  function logDishToProfile() {
+    const protein = parseFloat(document.getElementById('dish-protein').value) || 0;
+    const cal = parseFloat(document.getElementById('dish-cal').value) || 0;
+    const carbs = parseFloat(document.getElementById('dish-carbs').value) || 0;
+    const fat = parseFloat(document.getElementById('dish-fat').value) || 0;
+    const fiber = parseFloat(document.getElementById('dish-fiber').value) || 0;
+
+    const person = personMacros[currentPerson].person;
+    const date = getISTToday();
+    
+    // Get components if any
+    const compEls = document.querySelectorAll('[id^="dish-comp-"]');
+    const components = [...compEls].map(el => el.value).filter(v => v);
+    const dishName = components.length > 0 ? components.join(' + ') : 'Home cooked meal (scanned)';
+    
+    mealLog.unshift({ dish: dishName, time: getISTDatetime(), date, loggedBy: person, source: 'home-scanned', macros: {protein, cal, carbs, fat, fiber} });
+    sheetPost({ action: 'logMeal', mealName: dishName, mealType: 'Home cooked', loggedBy: person, notes: JSON.stringify({protein, cal, carbs, fat, fiber}) });
+    
+    showToast('Logged ' + dishName + ' ✓', 'success');
+    document.getElementById('dish-input').value = '';
+    document.getElementById('meal-vision-output').style.display = 'none';
+    loadDayProgress();
   }
 
   // ── Profile & Progress ──
@@ -1170,20 +1486,137 @@
     return [...new Set(recent)].slice(0, 5);
   }
 
+
+  // ── Preferences & Member Management ──
+  function renderCurrentPrefs() {
+    const person = personMacros[currentPerson].person;
+    const prefs = memberProfiles[person] || {};
+    const el = document.getElementById('current-prefs');
+    el.innerHTML = '<strong>' + person + '\'s diet:</strong><br>' +
+      (prefs.diet || 'Not set') + '<br>' +
+      '<strong>Likes:</strong> ' + (prefs.likes || 'Not set') + '<br>' +
+      '<strong>Dislikes:</strong> ' + (prefs.dislikes || 'Not set') + '<br>' +
+      '<strong>Allergies:</strong> ' + (prefs.allergies || 'None');
+  }
+
+  function editPreferences() {
+    const person = personMacros[currentPerson].person;
+    const prefs = memberProfiles[person] || { diet: '', likes: '', dislikes: '', allergies: '' };
+    const el = document.getElementById('prefs-edit');
+    let html = '<div class="card"><div class="label">Edit ' + person + '\'s preferences</div>';
+    html += '<div style="font-size:12px;color:var(--text2);margin-bottom:8px;">Diet type</div><input type="text" id="pref-diet" value="' + (prefs.diet||'') + '" style="margin-bottom:8px;" />';
+    html += '<div style="font-size:12px;color:var(--text2);margin-bottom:8px;">Likes</div><textarea id="pref-likes" style="margin-bottom:8px;">' + (prefs.likes||'') + '</textarea>';
+    html += '<div style="font-size:12px;color:var(--text2);margin-bottom:8px;">Dislikes</div><textarea id="pref-dislikes" style="margin-bottom:8px;">' + (prefs.dislikes||'') + '</textarea>';
+    html += '<div style="font-size:12px;color:var(--text2);margin-bottom:8px;">Allergies</div><input type="text" id="pref-allergies" value="' + (prefs.allergies||'') + '" style="margin-bottom:8px;" />';
+    html += '<button class="btn btn-primary btn-sm" onclick="savePreferences()">Save</button> <button class="btn btn-sm" onclick="cancelEditPrefs()">Cancel</button></div>';
+    el.innerHTML = html;
+    el.style.display = 'block';
+  }
+
+  function savePreferences() {
+    const person = personMacros[currentPerson].person;
+    memberProfiles[person] = {
+      diet: document.getElementById('pref-diet').value,
+      likes: document.getElementById('pref-likes').value,
+      dislikes: document.getElementById('pref-dislikes').value,
+      allergies: document.getElementById('pref-allergies').value
+    };
+    saveMemberProfiles();
+    renderCurrentPrefs();
+    document.getElementById('prefs-edit').style.display = 'none';
+    showToast('Preferences saved', 'success');
+  }
+
+  function cancelEditPrefs() {
+    document.getElementById('prefs-edit').style.display = 'none';
+  }
+
+  function renderMembersList() {
+    const el = document.getElementById('members-list');
+    const names = Object.keys(memberProfiles);
+    el.innerHTML = names.map(name =>
+      '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px;border:0.5px solid var(--border);border-radius:var(--radius);margin-bottom:6px;"><span style="font-weight:500;">' + name + '</span><button class="btn btn-sm" style="padding:3px 8px;font-size:11px;" onclick="removeMember(\'' + name + '\')">Remove</button></div>'
+    ).join('');
+  }
+
+  function showAddMemberUI() {
+    const el = document.getElementById('add-member-form');
+    let html = '<div style="display:flex;gap:6px;margin-bottom:8px;"><input type="text" id="new-member-name" placeholder="Member name" /><button class="btn btn-primary btn-sm" onclick="addMember()">Add</button></div>';
+    el.innerHTML = html;
+    el.style.display = 'block';
+  }
+
+  function addMember() {
+    const name = document.getElementById('new-member-name').value.trim();
+    if (!name) { showToast('Enter a name', 'error'); return; }
+    if (memberProfiles[name]) { showToast(name + ' already exists', 'error'); return; }
+    
+    // Add to profiles and macros
+    memberProfiles[name] = { diet: '', likes: '', dislikes: '', allergies: '' };
+    personMacros.push({ person: name, cal: 1900, protein: 150, carbs: 185, fat: 55, fiber: 30, weight: 75 });
+    
+    // Update person buttons in profile
+    const toggleEl = document.querySelector('.person-toggle');
+    const newBtn = document.createElement('button');
+    newBtn.className = 'person-btn';
+    newBtn.textContent = name;
+    newBtn.onclick = function() { switchPerson(this, personMacros.length - 1); };
+    toggleEl.appendChild(newBtn);
+    
+    saveMemberProfiles();
+    renderMembersList();
+    document.getElementById('add-member-form').style.display = 'none';
+    showToast(name + ' added', 'success');
+  }
+
+  function removeMember(name) {
+    if (!confirm('Remove ' + name + ' from household?')) return;
+    delete memberProfiles[name];
+    const idx = personMacros.findIndex(m => m.person === name);
+    if (idx >= 0) personMacros.splice(idx, 1);
+    saveMemberProfiles();
+    renderMembersList();
+    
+    // Remove button from UI
+    const buttons = document.querySelectorAll('.person-btn');
+    buttons.forEach((btn, i) => {
+      if (btn.textContent === name) btn.remove();
+    });
+    
+    if (currentPerson >= personMacros.length) currentPerson = 0;
+    switchPerson(buttons[0], 0);
+    showToast(name + ' removed', 'success');
+  }
+
   // ── Init ──
+  initMemberProfiles();
   renderInventory();
   renderLog();
   updateMacroDisplay();
   initProgressDate();
+  if (currentPerson < personMacros.length) renderCurrentPrefs();
+  renderMembersList();
   const savedUser = localStorage.getItem('ntos_user');
   if (savedUser) {
     const idx = personMacros.findIndex(m => m.person === savedUser);
     if (idx >= 0) { currentUser = savedUser; currentPerson = idx; updateMacroDisplay(); }
     document.getElementById('user-modal').style.display = 'none';
     syncAll().then(() => loadDayProgress());
-  } else {
+  }
+
+  // ── File input handlers ──
+  document.getElementById('label-input')?.addEventListener('change', scanNutritionLabel);
+  document.getElementById('dish-input')?.addEventListener('change', scanDish);
+  document.getElementById('fridge-input')?.addEventListener('change', scanInventory);
+  document.getElementById('order-input')?.addEventListener('change', scanOrder); else {
     syncAll().then(() => loadDayProgress());
   }
+
+  // ── File input handlers ──
+  document.getElementById('label-input')?.addEventListener('change', scanNutritionLabel);
+  document.getElementById('dish-input')?.addEventListener('change', scanDish);
+  document.getElementById('fridge-input')?.addEventListener('change', scanInventory);
+  document.getElementById('order-input')?.addEventListener('change', scanOrder);
 </script>
 
 </body>
