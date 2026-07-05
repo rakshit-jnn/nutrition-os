@@ -1,3 +1,17 @@
+// Detect image format from base64 string
+function detectImageType(base64) {
+  // Check for JPEG magic bytes: FF D8 FF
+  if (base64.startsWith('/9j/')) return 'image/jpeg';
+  // Check for PNG magic bytes: 89 50 4E 47
+  if (base64.startsWith('iVBORw0KGgo')) return 'image/png';
+  // Check for WebP magic bytes
+  if (base64.includes('UklGRi') && base64.includes('WEBP')) return 'image/webp';
+  // Check for GIF magic bytes: 47 49 46
+  if (base64.startsWith('R0lGODlh') || base64.startsWith('R0lGODkh')) return 'image/gif';
+  // Default to PNG (most compatible)
+  return 'image/png';
+}
+
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: 'Method not allowed' };
@@ -7,8 +21,18 @@ exports.handler = async (event) => {
     const body = JSON.parse(event.body);
     const { imageBase64, taskType, context } = body;
 
-    if (!imageBase64) {
-      return { statusCode: 400, body: JSON.stringify({ error: 'No image provided' }) };
+    if (!imageBase64 || typeof imageBase64 !== 'string') {
+      return { statusCode: 400, body: JSON.stringify({ error: 'Invalid image data' }) };
+    }
+    
+    // Clean up base64 string - remove whitespace and data URL prefix if present
+    let cleanBase64 = imageBase64.trim();
+    if (cleanBase64.startsWith('data:')) {
+      cleanBase64 = cleanBase64.split(',')[1] || cleanBase64;
+    }
+    cleanBase64 = cleanBase64.replace(/\s/g, '').replace(/\n/g, '').replace(/\r/g, '');
+    if (cleanBase64.length < 50) {
+      return { statusCode: 400, body: JSON.stringify({ error: 'Image too small' }) };
     }
 
     // Determine the prompt based on task type
@@ -40,8 +64,8 @@ exports.handler = async (event) => {
               type: 'image',
               source: {
                 type: 'base64',
-                media_type: 'image/jpeg',
-                data: imageBase64
+                media_type: detectImageType(cleanBase64),
+                data: cleanBase64
               }
             },
             {
