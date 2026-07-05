@@ -1188,22 +1188,8 @@
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => {
-        try {
-          let base64 = reader.result;
-          // Remove data URL prefix if present
-          if (base64.includes(',')) {
-            base64 = base64.split(',')[1];
-          }
-          // Remove any whitespace
-          base64 = base64.replace(/\s/g, '');
-          if (!base64 || base64.length === 0) {
-            reject(new Error('Failed to encode image'));
-          } else {
-            resolve(base64);
-          }
-        } catch(e) {
-          reject(e);
-        }
+        const base64 = reader.result.split(',')[1];
+        resolve(base64);
       };
       reader.onerror = () => reject(new Error('Failed to read file'));
       reader.readAsDataURL(file);
@@ -1212,13 +1198,9 @@
 
   async function callVision(taskType, imageBase64, outputEl) {
     outputEl.className = 'ai-box loading';
-    outputEl.innerHTML = '<span class="loading-dots">Scanning image...</span>';
+    outputEl.innerHTML = '<span class="loading-dots">Scanning...</span>';
 
     try {
-      if (!imageBase64 || imageBase64.length < 100) {
-        throw new Error('Image encoding failed - try a clearer photo');
-      }
-
       const resp = await fetch('/api/vision', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1226,19 +1208,15 @@
       });
       
       const data = await resp.json();
-      
-      if (!resp.ok) {
-        throw new Error(data.error || 'Scanning failed');
-      }
       if (data.error) throw new Error(data.error);
       
       outputEl.className = 'ai-box';
-      outputEl.innerHTML = '<strong>Extracted data:</strong><pre style="overflow:auto;max-height:200px;">' + JSON.stringify(data.data, null, 2) + '</pre>';
+      outputEl.innerHTML = '<pre style="font-size:12px;max-height:150px;overflow:auto;">' + JSON.stringify(data.data, null, 1) + '</pre>';
       return data.data;
     } catch(e) {
       outputEl.className = 'ai-box';
-      outputEl.innerHTML = '<strong style="color:var(--red-text);">Error:</strong><br>' + e.message;
-      showToast('Scan failed: ' + e.message, 'error');
+      outputEl.innerHTML = 'Error: ' + e.message;
+      showToast('Scan failed', 'error');
       return null;
     }
   }
