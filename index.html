@@ -734,6 +734,20 @@
   const MODEL       = 'claude-sonnet-4-5';
   const SHEET_URL   = 'https://script.google.com/macros/s/AKfycbxXDdY5y_QUVIML1Zb4nwTnuryI_Uqhe-EGwc_iDT_s5OZ9wJNcfWvILo4rCC5bN6XT/exec';
 
+
+  // ── User Selection (define early) ──
+  function selectUser(name, idx) {
+    currentUser = name;
+    currentPerson = idx;
+    localStorage.setItem('ntos_user', name);
+    const modal = document.getElementById('user-modal');
+    if (modal) modal.style.display = 'none';
+    updateMacroDisplay();
+    renderCurrentPrefs();
+    renderMembersList();
+    showToast('Welcome, ' + name + '!', 'success');
+  }
+
   // ── State ──
   let inventory    = [];
   let mealLog      = [];
@@ -1601,8 +1615,8 @@
     const idx = personMacros.findIndex(m => m.person === savedUser);
     if (idx >= 0) { currentUser = savedUser; currentPerson = idx; updateMacroDisplay(); }
     document.getElementById('user-modal').style.display = 'none';
-    syncAll().then(() => loadDayProgress());
   }
+  syncAll().then(() => loadDayProgress());
 
   // ── File input handlers ──
   document.getElementById('label-input')?.addEventListener('change', scanNutritionLabel);
