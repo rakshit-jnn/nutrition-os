@@ -1815,6 +1815,12 @@ Use categories: Proteins, Vegetables, Fruits, Dairy & Bread, Grains & Carbs, Oil
     });
     saveProfilesLocal(); renderCurrentPrefs();
     document.getElementById('prefs-edit').style.display='none';
+    sheetPost({ action:'savePreferences', person:name,
+      diet:memberProfiles[name].diet,
+      likes:memberProfiles[name].likes,
+      dislikes:memberProfiles[name].dislikes,
+      allergies:memberProfiles[name].allergies
+    });
     showToast('Preferences saved ✓','success');
   }
 
@@ -1899,8 +1905,14 @@ Use categories: Proteins, Vegetables, Fruits, Dairy & Bread, Grains & Carbs, Oil
       age,height,weight,cal,protein,carbs,fat,fiber:Math.round(weight*0.4)
     };
     saveProfilesLocal(); rebuildPersonMacros();
-    // Push macros to sheet so member persists in DB
+    // Push macros + preferences to Sheet so member syncs across devices
     sheetPost({ action:'updateMacros', person:name, calories:cal, protein, carbs, fat, weight });
+    sheetPost({ action:'savePreferences', person:name,
+      diet:memberProfiles[name].diet,
+      likes:memberProfiles[name].likes,
+      dislikes:memberProfiles[name].dislikes,
+      allergies:memberProfiles[name].allergies
+    });
     // Refresh everything that lists members
     renderMembersList(); renderProfilePersonToggle(); renderMemberPills(); renderWorkoutMemberToggle();
     renderUserModalButtons();
@@ -2011,12 +2023,41 @@ Use categories: Proteins, Vegetables, Fruits, Dairy & Bread, Grains & Carbs, Oil
     if(ml&&ml.meals){ mealLog=ml.meals.map(m=>({dish:m.mealName,time:m.date,date:(m.date||'').slice(0,10),loggedBy:m.loggedBy,mealType:m.mealType})); renderMealLog(); }
     const mac=await sheetGet('getMacros');
     if(mac&&mac.macros&&mac.macros.length){
+      // Sheet is source of truth for member list — merge Sheet members into local profiles
+      // preserving any locally-stored preferences (diet/likes/dislikes) for existing members
+      const sheetNames = mac.macros.map(r=>r.person);
+      // Add any Sheet members not in local profiles
       mac.macros.forEach(row=>{
-        if(!memberProfiles[row.person]) memberProfiles[row.person]={diet:'Not set',likes:'',dislikes:'',allergies:'None',age:25,height:175};
-        Object.assign(memberProfiles[row.person],{cal:row.calories,protein:row.protein,carbs:row.carbs,fat:row.fat,weight:row.weight});
+        if(!memberProfiles[row.person]){
+          // New member from Sheet — create with defaults for fields not stored in Sheet
+          memberProfiles[row.person]={diet:'Not set',likes:'',dislikes:'',allergies:'None',age:25,height:175};
+        }
+        // Always update numeric stats from Sheet (source of truth)
+        Object.assign(memberProfiles[row.person],{
+          cal:row.calories, protein:row.protein, carbs:row.carbs, fat:row.fat, weight:row.weight
+        });
+      });
+      // Remove members that no longer exist in Sheet (were removed on another device)
+      Object.keys(memberProfiles).forEach(name=>{
+        if(!sheetNames.includes(name)) delete memberProfiles[name];
       });
       saveProfilesLocal(); rebuildPersonMacros();
       renderProfilePersonToggle(); renderMemberPills(); renderWorkoutMemberToggle(); renderMembersList(); renderUserModalButtons();
+    }
+    // Sync preferences (diet/likes/dislikes/allergies) from Sheet
+    const prefs=await sheetGet('getPreferences');
+    if(prefs&&prefs.preferences&&prefs.preferences.length){
+      prefs.preferences.forEach(row=>{
+        if(memberProfiles[row.person]){
+          // Only overwrite if Sheet has non-empty value (don't blank out local data)
+          if(row.diet)     memberProfiles[row.person].diet     = row.diet;
+          if(row.likes)    memberProfiles[row.person].likes    = row.likes;
+          if(row.dislikes) memberProfiles[row.person].dislikes = row.dislikes;
+          if(row.allergies)memberProfiles[row.person].allergies= row.allergies;
+        }
+      });
+      saveProfilesLocal();
+      renderCurrentPrefs();
     }
     const wk=await sheetGet('getWorkoutLog');
     if(wk&&wk.workouts){ workoutLog=wk.workouts.map(w=>({date:(w.date||'').slice(0,10),loggedBy:w.person,exercise:w.exercise,muscleGroup:w.muscleGroup,sets:safeParseSets(w.sets),totalVolume:w.totalVolume,caloriesBurned:w.caloriesBurned})); renderWorkoutUI(); }
