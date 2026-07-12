@@ -330,16 +330,37 @@
     }
 
     /* ── Redesign additions ── */
-    .inv-group { margin-bottom: 1.25rem; }
+    .inv-group { margin-bottom: 1.5rem; }
     .inv-group-title {
-      font-size: 12px; font-weight: 600; letter-spacing: 0.04em;
-      text-transform: uppercase; color: var(--text2);
-      margin-bottom: 8px; display: flex; align-items: center; gap: 6px;
+      font-size: 12px; font-weight: 700; letter-spacing: 0.05em;
+      text-transform: uppercase; color: var(--text);
+      margin-bottom: 10px; display: flex; align-items: center; gap: 8px;
+      padding: 6px 10px 6px 12px;
+      border-radius: var(--radius);
+      border-left: 3px solid currentColor;
     }
     .inv-group-title .count {
-      background: var(--surface2); border-radius: 99px;
-      padding: 1px 8px; font-size: 11px; color: var(--text3); font-weight: 500;
+      background: var(--surface); border-radius: 99px;
+      padding: 1px 8px; font-size: 11px; color: var(--text2); font-weight: 500;
+      border: 0.5px solid var(--border);
+      margin-left: auto;
     }
+    .inv-group-title.cat-veg   { color: #27500a; background: #eaf3de; border-left-color: #5a9240; }
+    .inv-group-title.cat-fruit { color: #7c3400; background: #fdeede; border-left-color: #e07c30; }
+    .inv-group-title.cat-prot  { color: #791f1f; background: #fcebeb; border-left-color: #c94040; }
+    .inv-group-title.cat-dairy { color: #0c447c; background: #e6f1fb; border-left-color: #3a8fd1; }
+    .inv-group-title.cat-grain { color: #5a3d00; background: #faeeda; border-left-color: #c49020; }
+    .inv-group-title.cat-oil   { color: #2a3d00; background: #edf4dc; border-left-color: #7aaa30; }
+    .inv-group-title.cat-spice { color: #6b1f00; background: #fde8de; border-left-color: #d05020; }
+    .inv-group-title.cat-supp  { color: #1a3060; background: #e2eaf8; border-left-color: #4060c0; }
+    .inv-group-title.cat-other { color: var(--text2); background: var(--surface2); border-left-color: var(--border2); }
+
+    /* Mic pulse animation */
+    @keyframes mic-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(201,64,64,0.4); }
+      50% { box-shadow: 0 0 0 6px rgba(201,64,64,0); }
+    }
+    .icon-btn.recording { animation: mic-pulse 1s ease infinite; }
     .unified-box {
       width: 100%; min-height: 90px; resize: vertical;
       background: var(--surface2); border: 0.5px solid var(--border);
@@ -483,6 +504,7 @@
     <div id="meal-suggestion-wrap" style="display:none;">
       <div class="label">Suggestions</div>
       <div id="meal-output"></div>
+      <div id="maid-table-wrap" class="card" style="display:none;margin-top:10px;"></div>
     </div>
 
     <hr />
@@ -923,6 +945,17 @@
   }
 
   // ══════════ INVENTORY: render grouped ══════════
+  const CAT_META = {
+    'Vegetables':      { emoji:'🥦', cls:'cat-veg'   },
+    'Fruits':          { emoji:'🍎', cls:'cat-fruit'  },
+    'Proteins':        { emoji:'🥩', cls:'cat-prot'   },
+    'Dairy & Bread':   { emoji:'🥛', cls:'cat-dairy'  },
+    'Grains & Carbs':  { emoji:'🌾', cls:'cat-grain'  },
+    'Oils & Condiments':{ emoji:'🫙', cls:'cat-oil'   },
+    'Spices':          { emoji:'🌶️', cls:'cat-spice'  },
+    'Supplements':     { emoji:'💊', cls:'cat-supp'   },
+    'Other':           { emoji:'📦', cls:'cat-other'  },
+  };
   function renderInventory() {
     const wrap = document.getElementById('inventory-grouped');
     if (!inventory.length) { wrap.innerHTML = '<div style="font-size:13px;color:var(--text3);">Nothing added yet — add items below or tap Sync.</div>'; return; }
@@ -934,7 +967,10 @@
     let html = '';
     CATEGORY_ORDER.forEach(cat=>{
       if (!groups[cat]) return;
-      html += `<div class="inv-group"><div class="inv-group-title">${cat} <span class="count">${groups[cat].length}</span></div><div class="tags-wrap">`;
+      const meta = CAT_META[cat] || { emoji:'📦', cls:'cat-other' };
+      html += `<div class="inv-group">
+        <div class="inv-group-title ${meta.cls}">${meta.emoji} ${cat}<span class="count">${groups[cat].length}</span></div>
+        <div class="tags-wrap">`;
       groups[cat].forEach(item=>{
         html += `<div class="item-tag"><span>${item.name} <span class="qty">${item.qty||''}</span></span><button onclick="removeItem(${item.idx})" title="Remove">×</button></div>`;
       });
@@ -989,23 +1025,50 @@
   let invRec = null;
   function toggleInvMic() { toggleMic('inv-box','inv-mic','inv-input-status', v=>v); }
 
-  // Generic mic helper — appends transcript to a box
+  // Generic mic helper — streams interim results live into box
   function toggleMic(boxId, btnId, statusId, transform) {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { showToast('Voice not supported in this browser','error'); return; }
     const btn = document.getElementById(btnId);
+    // If already recording, stop it
     if (btn._rec) { btn._rec.stop(); return; }
-    const rec = new SR(); rec.lang='en-IN'; rec.interimResults=false;
-    btn._rec = rec; btn.classList.add('recording'); btn.textContent='● Listening…';
-    document.getElementById(statusId).textContent = 'Listening…';
+    const rec = new SR();
+    rec.lang = 'en-IN';
+    rec.interimResults = true;   // stream partial results
+    rec.continuous = false;
+    // Snapshot of what was in the box before we started speaking
+    const box = document.getElementById(boxId);
+    const baseText = box.value.trim();
+    btn._rec = rec;
+    btn.classList.add('recording');
+    btn.textContent = '● Listening…';
+    document.getElementById(statusId).textContent = '';
+    // Instant visual: show cursor in box
+    box.focus();
     rec.onresult = e => {
-      let t=''; for (let i=e.resultIndex;i<e.results.length;i++) t+=e.results[i][0].transcript;
-      const box = document.getElementById(boxId);
-      box.value = (box.value.trim()? box.value.trim()+'\n':'') + transform(t);
-      document.getElementById(statusId).textContent = '✓ Added';
+      let interim = '', final = '';
+      for (let i = 0; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) final += t;
+        else interim += t;
+      }
+      // Show live text in box (interim in grey via placeholder trick)
+      const combined = transform(final || interim);
+      box.value = baseText ? baseText + '\n' + combined : combined;
+      // Scroll box to bottom
+      box.scrollTop = box.scrollHeight;
+      if (final) document.getElementById(statusId).textContent = '✓ Done';
     };
-    rec.onerror = ()=> document.getElementById(statusId).textContent='Voice failed';
-    rec.onend = ()=>{ btn._rec=null; btn.classList.remove('recording'); btn.textContent='🎤 Speak'; setTimeout(()=>document.getElementById(statusId).textContent='',1500); };
+    rec.onerror = e => {
+      document.getElementById(statusId).textContent = e.error === 'no-speech' ? 'No speech detected' : 'Voice error';
+      btn._rec = null; btn.classList.remove('recording'); btn.textContent = '🎤 Speak';
+    };
+    rec.onend = () => {
+      btn._rec = null;
+      btn.classList.remove('recording');
+      btn.textContent = '🎤 Speak';
+      setTimeout(() => document.getElementById(statusId).textContent = '', 2000);
+    };
     rec.start();
   }
 
@@ -1099,6 +1162,9 @@
     const note = document.getElementById('meal-note').value;
     if (!eatingMembers.length){ showToast('Select at least one member','error'); return; }
     document.getElementById('meal-suggestion-wrap').style.display='block';
+    // Hide stale maid table while loading
+    const maidWrap = document.getElementById('maid-table-wrap');
+    if (maidWrap) { maidWrap.style.display='none'; }
 
     const summary = eatingMembers.map(name=>{
       const p = memberProfiles[name]; const m = personMacros.find(x=>x.person===name)||{};
@@ -1115,7 +1181,96 @@ Suggest 1-2 dishes that work for everyone. Format your response in clean markdow
 **Portions:** one line per person with portion size and protein/kcal estimate
 Keep it tight. No preamble.`;
     await callClaudeInto(prompt, 'meal-output', 1200);
+
+    // Now fetch Hindi maid summary as structured JSON
+    await buildMaidTable(meal);
     document.getElementById('meal-suggestion-wrap').scrollIntoView({behavior:'smooth', block:'nearest'});
+  }
+
+  async function buildMaidTable(meal) {
+    const maidWrap = document.getElementById('maid-table-wrap');
+    if (!maidWrap) return;
+    maidWrap.style.display = 'block';
+    maidWrap.innerHTML = '<div style="font-size:12px;color:var(--text2);padding:10px 0;">मेड के लिए सारांश बना रहे हैं<span class="loading-dots"></span></div>';
+
+    const mainText = document.getElementById('meal-output').innerText || '';
+    if (!mainText || mainText.length < 20) { maidWrap.style.display='none'; return; }
+
+    const jsonPrompt = `Based on this meal suggestion: """${mainText.slice(0,1500)}"""
+
+Return ONLY valid JSON, no other text:
+{
+  "dishes": [
+    {
+      "name_hi": "डिश का नाम हिंदी में",
+      "for_whom": "सबके लिए / किसके लिए",
+      "ingredients_hi": "मुख्य सामग्री: पनीर 300g, टमाटर 2, प्याज़ 1",
+      "protein_kcal": "~25g protein, 350 kcal"
+    }
+  ]
+}`;
+    try {
+      const raw = await callClaudeRaw(jsonPrompt, 400);
+      const clean = raw.replace(/```json|```/g,'').trim();
+      const parsed = JSON.parse(clean);
+      if (!parsed.dishes || !parsed.dishes.length) throw new Error('empty');
+      renderMaidTable(parsed.dishes);
+    } catch(e) {
+      maidWrap.style.display = 'none';
+    }
+  }
+
+  function renderMaidTable(dishes) {
+    const maidWrap = document.getElementById('maid-table-wrap');
+    let tableRows = dishes.map(d =>
+      `<tr>
+        <td style="padding:10px 12px;border-bottom:0.5px solid var(--border);font-weight:600;font-size:14px;">${d.name_hi}</td>
+        <td style="padding:10px 12px;border-bottom:0.5px solid var(--border);font-size:13px;color:var(--text2);">${d.for_whom}</td>
+        <td style="padding:10px 12px;border-bottom:0.5px solid var(--border);font-size:13px;">${d.ingredients_hi}</td>
+        <td style="padding:10px 12px;border-bottom:0.5px solid var(--border);font-size:12px;color:var(--text2);white-space:nowrap;">${d.protein_kcal}</td>
+      </tr>`
+    ).join('');
+
+    maidWrap.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <div style="font-size:12px;font-weight:600;color:var(--text2);letter-spacing:0.04em;text-transform:uppercase;">मेड के लिए — WhatsApp पर भेजें</div>
+        <button class="btn btn-sm" onclick="copyMaidTable()" style="background:var(--green-bg);color:var(--green-text);border-color:transparent;font-weight:600;">📋 Copy करें</button>
+      </div>
+      <div style="overflow-x:auto;border-radius:var(--radius);border:0.5px solid var(--border);">
+        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+          <thead>
+            <tr style="background:var(--surface2);">
+              <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--text2);">डिश</th>
+              <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--text2);">किसके लिए</th>
+              <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--text2);">सामग्री</th>
+              <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--text2);">Protein/Kcal</th>
+            </tr>
+          </thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      </div>`;
+    // store dishes for copy
+    maidWrap._dishes = dishes;
+  }
+
+  function copyMaidTable() {
+    const maidWrap = document.getElementById('maid-table-wrap');
+    const dishes = maidWrap._dishes;
+    if (!dishes) return;
+    const lines = dishes.map(d =>
+      `🍽️ *${d.name_hi}*\n👥 ${d.for_whom}\n🛒 ${d.ingredients_hi}\n💪 ${d.protein_kcal}`
+    ).join('\n\n');
+    const text = `📋 *आज का खाना*\n\n${lines}\n\n_Nutrition OS से भेजा गया_`;
+    navigator.clipboard.writeText(text).then(()=>{
+      showToast('WhatsApp के लिए copy हो गया! ✓','success');
+    }).catch(()=>{
+      // Fallback for mobile
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.style.position='fixed'; ta.style.opacity='0';
+      document.body.appendChild(ta); ta.focus(); ta.select();
+      document.execCommand('copy'); document.body.removeChild(ta);
+      showToast('Copy हो गया! ✓','success');
+    });
   }
 
   // ══════════ MEAL QUICK ADD ══════════
@@ -1681,22 +1836,48 @@ Use categories: Proteins, Vegetables, Fruits, Dairy & Bread, Grains & Carbs, Oil
   function showAddMemberForm(){
     const el=document.getElementById('add-member-form');
     el.style.display='block';
-    el.innerHTML=`<div class="card" style="margin:0;">
-      <div class="label">New member onboarding</div>
-      <div style="font-size:12px;color:var(--text2);margin-bottom:8px;">Fill everything — nothing is assumed by default.</div>
-      <input type="text" id="nm-name" placeholder="Name" style="margin-bottom:8px;" />
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px;">
-        <input type="number" id="nm-age" placeholder="Age" />
-        <input type="number" id="nm-height" placeholder="Height cm" />
-        <input type="number" id="nm-weight" placeholder="Weight kg" />
+    el.innerHTML=`
+      <div style="border-top:0.5px solid var(--border);margin:12px 0 14px;"></div>
+
+      <div style="font-size:13px;font-weight:600;margin-bottom:2px;">नया सदस्य जोड़ें</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:14px;">सब कुछ भरें — कुछ भी assume नहीं किया जाता।</div>
+
+      <!-- Name -->
+      <input type="text" id="nm-name" placeholder="नाम (Name)" style="margin-bottom:10px;font-size:15px;padding:10px 12px;" />
+
+      <!-- Body stats — 3 columns, font-size reduced to prevent clipping -->
+      <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text2);margin-bottom:6px;">Body stats</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px;">
+        <div style="position:relative;">
+          <input type="number" id="nm-age" placeholder="Age" style="padding-right:28px;font-size:13px;" />
+          <span style="position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:10px;color:var(--text3);pointer-events:none;">yrs</span>
+        </div>
+        <div style="position:relative;">
+          <input type="number" id="nm-height" placeholder="Height" style="padding-right:24px;font-size:13px;" />
+          <span style="position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:10px;color:var(--text3);pointer-events:none;">cm</span>
+        </div>
+        <div style="position:relative;">
+          <input type="number" id="nm-weight" placeholder="Weight" style="padding-right:24px;font-size:13px;" />
+          <span style="position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:10px;color:var(--text3);pointer-events:none;">kg</span>
+        </div>
       </div>
-      <input type="text" id="nm-diet" placeholder="Diet (e.g. vegetarian + eggs)" style="margin-bottom:8px;" />
-      <textarea id="nm-likes" placeholder="Likes" style="margin-bottom:8px;min-height:44px;"></textarea>
-      <textarea id="nm-dislikes" placeholder="Dislikes" style="margin-bottom:8px;min-height:44px;"></textarea>
-      <input type="text" id="nm-allergies" placeholder="Allergies (or None)" style="margin-bottom:10px;" />
-      <button class="btn btn-primary btn-full" onclick="addMember()">Add member</button>
-      <button class="btn btn-full" style="margin-top:6px;" onclick="document.getElementById('add-member-form').style.display='none'">Cancel</button>
-    </div>`;
+
+      <!-- Diet type -->
+      <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text2);margin-bottom:6px;">Diet type</div>
+      <input type="text" id="nm-diet" placeholder="e.g. vegetarian, non-veg, vegan + eggs" style="margin-bottom:10px;font-size:13px;" />
+
+      <!-- Food preferences — side by side -->
+      <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text2);margin-bottom:6px;">Food preferences</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px;">
+        <textarea id="nm-likes" placeholder="✓ Likes&#10;e.g. Chole, Paneer, Spicy" style="min-height:64px;font-size:12px;resize:none;"></textarea>
+        <textarea id="nm-dislikes" placeholder="✗ Dislikes&#10;e.g. Bhindi, Bland food" style="min-height:64px;font-size:12px;resize:none;"></textarea>
+      </div>
+
+      <!-- Allergies -->
+      <input type="text" id="nm-allergies" placeholder="Allergies (or write None)" style="margin-bottom:14px;font-size:13px;" />
+
+      <button class="btn btn-primary btn-full" onclick="addMember()" style="font-size:14px;padding:10px;">Add member ✓</button>
+      <button class="btn btn-full" style="margin-top:6px;font-size:13px;" onclick="document.getElementById('add-member-form').style.display='none'">Cancel</button>`;
   }
   function addMember(){
     const name=document.getElementById('nm-name').value.trim();
