@@ -99,7 +99,8 @@
     .main { max-width: 680px; margin: 0 auto; padding: 1.5rem 1.25rem 4rem; }
 
     .section { display: none; }
-    .section.active { display: block; }
+    .section.active { display: block; animation: fadeIn 0.35s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
     /* Cards */
     .card {
@@ -938,6 +939,7 @@
     document.getElementById('tab-'+name).classList.add('active');
     if (btn) btn.classList.add('active');
     else { document.querySelectorAll('.tab').forEach(t=>{ if(t.getAttribute('onclick').includes("'"+name+"'")) t.classList.add('active'); }); }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
     if (name==='profile') { loadDayProgress(); }
     if (name==='meals') { renderPrevCookedHint(); renderMealQuick(); }
     if (name==='workouts') { renderWorkoutUI(); }
@@ -1118,8 +1120,7 @@
   // Inventory → meals redirect
   function goMealSuggestions() {
     switchTab('meals');
-    document.querySelector('.tab[onclick*="meals"]').classList.add('active');
-    setTimeout(()=> getMealSuggestions(), 300);
+    setTimeout(()=> getMealSuggestions(), 220);
   }
 
   // ══════════ PILLS ══════════
@@ -1180,35 +1181,28 @@ Suggest 1-2 dishes that work for everyone. Format your response in clean markdow
 **Steps:** numbered 2-4 simple steps
 **Portions:** one line per person with portion size and protein/kcal estimate
 Keep it tight. No preamble.`;
-    await callClaudeInto(prompt, 'meal-output', 1200);
+    const rawSuggestion = await callClaudeInto(prompt, 'meal-output', 1200);
 
-    // Now fetch Hindi maid summary as structured JSON
-    await buildMaidTable(meal);
-    document.getElementById('meal-suggestion-wrap').scrollIntoView({behavior:'smooth', block:'nearest'});
+    // Now fetch Hindi maid summary — pass raw text directly, no DOM scraping
+    await buildMaidTable(rawSuggestion);
   }
 
-  async function buildMaidTable(meal) {
+  async function buildMaidTable(rawSuggestion) {
     const maidWrap = document.getElementById('maid-table-wrap');
     if (!maidWrap) return;
     maidWrap.style.display = 'block';
-    maidWrap.innerHTML = '<div style="font-size:12px;color:var(--text2);padding:10px 0;">मेड के लिए सारांश बना रहे हैं<span class="loading-dots"></span></div>';
+    maidWrap.innerHTML = '<div style="font-size:12px;color:var(--text2);padding:10px 0;">Preparing maid summary<span class="loading-dots"></span></div>';
 
-    const mainText = document.getElementById('meal-output').innerText || '';
-    if (!mainText || mainText.length < 20) { maidWrap.style.display='none'; return; }
+    if (!rawSuggestion || rawSuggestion.length < 20) { maidWrap.style.display='none'; return; }
+    const mainText = rawSuggestion;
 
-    const jsonPrompt = `Based on this meal suggestion: """${mainText.slice(0,1500)}"""
+    const jsonPrompt = `Extract dish info from this meal suggestion and return ONLY a JSON object. No markdown, no backticks, no explanation. Just raw JSON.
 
-Return ONLY valid JSON, no other text:
-{
-  "dishes": [
-    {
-      "name_hi": "डिश का नाम हिंदी में",
-      "for_whom": "सबके लिए / किसके लिए",
-      "ingredients_hi": "मुख्य सामग्री: पनीर 300g, टमाटर 2, प्याज़ 1",
-      "protein_kcal": "~25g protein, 350 kcal"
-    }
-  ]
-}`;
+Meal suggestion text:
+${mainText.slice(0,1500)}
+
+Return this exact structure (fill in real values in Hindi where noted):
+{"dishes":[{"name_hi":"dish name in Hindi script","for_whom":"e.g. सबके लिए or Rakshit के लिए","ingredients_hi":"3-5 key ingredients in Hindi with quantities e.g. पनीर 300g, टमाटर 2, प्याज़ 1","protein_kcal":"e.g. ~28g protein, 380 kcal"}]}`;
     try {
       const raw = await callClaudeRaw(jsonPrompt, 400);
       const clean = raw.replace(/```json|```/g,'').trim();
@@ -1697,16 +1691,14 @@ Use categories: Proteins, Vegetables, Fruits, Dairy & Bread, Grains & Carbs, Oil
     // redirect to meals, prefill note, run suggestion
     eatingMembers=[who];
     switchTab('meals');
-    document.querySelector('.tab[onclick*="meals"]').classList.add('active');
     renderMemberPills();
     const muscles=[...new Set(todays.map(w=>w.muscleGroup))].join(', ');
     const cals=todays.reduce((a,w)=>a+w.caloriesBurned,0);
     document.getElementById('meal-note').value=`Just trained ${muscles}, burned ~${cals} kcal — want high-protein recovery meal.`;
-    // set meal type to post-workout
     const pills=document.querySelectorAll('#mealtime-pills .pill');
     pills.forEach(p=>p.classList.remove('selected'));
     [...pills].find(p=>p.textContent.includes('Post-workout'))?.classList.add('selected');
-    setTimeout(()=>getMealSuggestions(),300);
+    setTimeout(()=>getMealSuggestions(), 220);
   }
 
   // ══════════ PROFILE / MACROS ══════════
@@ -1838,46 +1830,55 @@ Use categories: Proteins, Vegetables, Fruits, Dairy & Bread, Grains & Carbs, Oil
     el.style.display='block';
     el.innerHTML=`
       <div style="border-top:0.5px solid var(--border);margin:12px 0 14px;"></div>
-
-      <div style="font-size:13px;font-weight:600;margin-bottom:2px;">नया सदस्य जोड़ें</div>
-      <div style="font-size:12px;color:var(--text2);margin-bottom:14px;">सब कुछ भरें — कुछ भी assume नहीं किया जाता।</div>
+      <div class="label">New member</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:12px;">Fill everything — nothing is assumed by default.</div>
 
       <!-- Name -->
-      <input type="text" id="nm-name" placeholder="नाम (Name)" style="margin-bottom:10px;font-size:15px;padding:10px 12px;" />
+      <input type="text" id="nm-name" placeholder="Name" style="margin-bottom:10px;" />
 
-      <!-- Body stats — 3 columns, font-size reduced to prevent clipping -->
-      <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text2);margin-bottom:6px;">Body stats</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px;">
-        <div style="position:relative;">
-          <input type="number" id="nm-age" placeholder="Age" style="padding-right:28px;font-size:13px;" />
-          <span style="position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:10px;color:var(--text3);pointer-events:none;">yrs</span>
+      <!-- Body stats — matching existing stepper card style -->
+      <div class="label">Body stats</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px;">
+        <div style="background:var(--surface2);border-radius:var(--radius-lg);padding:12px 14px;">
+          <div style="font-size:10px;color:var(--text2);font-weight:600;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px;">Age</div>
+          <div style="display:flex;align-items:baseline;gap:4px;">
+            <input type="number" id="nm-age" placeholder="25" style="background:transparent;border:none;border-bottom:1.5px solid var(--border2);border-radius:0;padding:2px 0;font-size:20px;font-weight:700;color:var(--text);outline:none;width:100%;" />
+            <span style="font-size:11px;color:var(--text2);white-space:nowrap;">yrs</span>
+          </div>
         </div>
-        <div style="position:relative;">
-          <input type="number" id="nm-height" placeholder="Height" style="padding-right:24px;font-size:13px;" />
-          <span style="position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:10px;color:var(--text3);pointer-events:none;">cm</span>
+        <div style="background:var(--surface2);border-radius:var(--radius-lg);padding:12px 14px;">
+          <div style="font-size:10px;color:var(--text2);font-weight:600;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px;">Height</div>
+          <div style="display:flex;align-items:baseline;gap:4px;">
+            <input type="number" id="nm-height" placeholder="175" style="background:transparent;border:none;border-bottom:1.5px solid var(--border2);border-radius:0;padding:2px 0;font-size:20px;font-weight:700;color:var(--text);outline:none;width:100%;" />
+            <span style="font-size:11px;color:var(--text2);white-space:nowrap;">cm</span>
+          </div>
         </div>
-        <div style="position:relative;">
-          <input type="number" id="nm-weight" placeholder="Weight" style="padding-right:24px;font-size:13px;" />
-          <span style="position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:10px;color:var(--text3);pointer-events:none;">kg</span>
+        <div style="background:var(--surface2);border-radius:var(--radius-lg);padding:12px 14px;">
+          <div style="font-size:10px;color:var(--text2);font-weight:600;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px;">Weight</div>
+          <div style="display:flex;align-items:baseline;gap:4px;">
+            <input type="number" id="nm-weight" placeholder="70" style="background:transparent;border:none;border-bottom:1.5px solid var(--border2);border-radius:0;padding:2px 0;font-size:20px;font-weight:700;color:var(--text);outline:none;width:100%;" />
+            <span style="font-size:11px;color:var(--text2);white-space:nowrap;">kg</span>
+          </div>
         </div>
       </div>
 
-      <!-- Diet type -->
-      <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text2);margin-bottom:6px;">Diet type</div>
-      <input type="text" id="nm-diet" placeholder="e.g. vegetarian, non-veg, vegan + eggs" style="margin-bottom:10px;font-size:13px;" />
+      <!-- Diet -->
+      <div class="label">Diet type</div>
+      <input type="text" id="nm-diet" placeholder="e.g. vegetarian, non-veg, vegan + eggs" style="margin-bottom:10px;" />
 
-      <!-- Food preferences — side by side -->
-      <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text2);margin-bottom:6px;">Food preferences</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px;">
-        <textarea id="nm-likes" placeholder="✓ Likes&#10;e.g. Chole, Paneer, Spicy" style="min-height:64px;font-size:12px;resize:none;"></textarea>
-        <textarea id="nm-dislikes" placeholder="✗ Dislikes&#10;e.g. Bhindi, Bland food" style="min-height:64px;font-size:12px;resize:none;"></textarea>
+      <!-- Likes / Dislikes -->
+      <div class="label">Food preferences</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+        <textarea id="nm-likes" placeholder="Likes — e.g. Chole, Paneer, Spicy" style="min-height:60px;font-size:13px;resize:none;"></textarea>
+        <textarea id="nm-dislikes" placeholder="Dislikes — e.g. Bhindi, Bland" style="min-height:60px;font-size:13px;resize:none;"></textarea>
       </div>
 
       <!-- Allergies -->
-      <input type="text" id="nm-allergies" placeholder="Allergies (or write None)" style="margin-bottom:14px;font-size:13px;" />
+      <div class="label">Allergies</div>
+      <input type="text" id="nm-allergies" placeholder="None, or list them" style="margin-bottom:14px;" />
 
-      <button class="btn btn-primary btn-full" onclick="addMember()" style="font-size:14px;padding:10px;">Add member ✓</button>
-      <button class="btn btn-full" style="margin-top:6px;font-size:13px;" onclick="document.getElementById('add-member-form').style.display='none'">Cancel</button>`;
+      <button class="btn btn-primary btn-full" onclick="addMember()">Add member</button>
+      <button class="btn btn-full" style="margin-top:6px;" onclick="document.getElementById('add-member-form').style.display='none'">Cancel</button>`;
   }
   function addMember(){
     const name=document.getElementById('nm-name').value.trim();
@@ -1982,11 +1983,9 @@ Use categories: Proteins, Vegetables, Fruits, Dairy & Bread, Grains & Carbs, Oil
     const t=memberProfiles[name];
     // redirect into meals output area for consistency
     switchTab('meals');
-    document.querySelector('.tab[onclick*="meals"]').classList.add('active');
     document.getElementById('meal-suggestion-wrap').style.display='block';
     const prompt=`Full-day meal plan for ${name} in Gurugram, gyms 3-4x/week, body recomposition. Diet: ${t.diet}. Targets: ${t.cal} kcal, ${t.protein}g protein, ${t.carbs}g carbs, ${t.fat}g fat. Give breakfast, lunch, post-workout snack, dinner. For each: dish, ingredients, est macros, simple cooking notes for a home cook. Clean markdown with a ## heading per meal.`;
     await callClaudeInto(prompt,'meal-output',1400);
-    document.getElementById('meal-suggestion-wrap').scrollIntoView({behavior:'smooth',block:'nearest'});
   }
 
   // ══════════ USER MODAL ══════════
