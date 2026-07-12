@@ -1027,10 +1027,13 @@
   let invRec = null;
   function toggleInvMic() { toggleMic('inv-box','inv-mic','inv-input-status', v=>v); }
 
-  // ══════════ HINDI ↔ ENGLISH NORMALISATION ══════════
-  // Converts Hindi spoken words to numbers/units
-  // "paanch sau gram paneer" → "500 g paneer"
-  function normaliseHindi(text) {
+  // ══════════ VOICE — HINDI + ENGLISH INPUT ══════════
+  // Detects if transcript contains Devanagari (actual Hindi script from hi-IN recogniser)
+  function hasDevanagari(text) { return /[\u0900-\u097F]/.test(text); }
+
+  // Romanised Hindi number/unit words → English output
+  // Works when en-IN recogniser returns "paanch sau gram" (roman letters)
+  function normaliseRomanHindi(text) {
     const ones = {ek:1,do:2,teen:3,tin:3,chaar:4,char:4,paanch:5,panch:5,chheh:6,chhe:6,saat:7,sat:7,aath:8,nau:9,das:10,gyarah:11,barah:12,terah:13,chaudah:14,pandrah:15,solah:16,satrah:17,atharah:18,unnis:19,bees:20,tees:30,chalis:40,pachaas:50,saath:60,sattar:70,assi:80,nabbe:90};
     const mults = {sau:100,hazaar:1000,lakh:100000};
     const unitMap = {gram:'g',grams:'g',graam:'g',kilo:'kg',kilogram:'kg',kilograms:'kg',litre:'L',liter:'L',litres:'L',liters:'L',milligram:'mg',milligrams:'mg',piece:'pcs',pieces:'pcs',packet:'pkt',packets:'pkt'};
@@ -1047,16 +1050,39 @@
     return out.join(' ').replace(/\s+/g,' ').trim();
   }
 
-  // Generic mic helper — bilingual hi-IN (handles Hindi + English + Hinglish)
-  // with live interim streaming and Hindi number normalisation
+  // If Devanagari detected, use Claude to translate to English item list
+  async function translateToEnglish(text, boxId, baseText, statusId, transform) {
+    const statusEl = document.getElementById(statusId);
+    statusEl.textContent = 'Translating…';
+    try {
+      const result = await callClaudeRaw(
+        `The user spoke this in Hindi: "${text}"
+Convert it to an English grocery/food item list. Output only the item names with quantities on separate lines, like:
+Paneer, 500g
+Milk, 1L
+Eggs, 12 pcs
+No explanations, no Hindi, just clean English item lines.`, 150);
+      const box = document.getElementById(boxId);
+      const combined = transform(result.trim());
+      box.value = baseText ? baseText + '\n' + combined : combined;
+      box.scrollTop = box.scrollHeight;
+      statusEl.textContent = '✓ Done';
+      setTimeout(() => statusEl.textContent = '', 2000);
+    } catch(e) {
+      statusEl.textContent = 'Translation failed';
+    }
+  }
+
+  // Generic mic helper — en-IN for romanised input, Claude fallback for Devanagari
   function toggleMic(boxId, btnId, statusId, transform) {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { showToast('Voice not supported in this browser','error'); return; }
     const btn = document.getElementById(btnId);
     if (btn._rec) { btn._rec.stop(); return; }
     const rec = new SR();
-    // hi-IN handles Hindi numbers, Hindi words, English words, and Hinglish mixed
-    rec.lang = 'hi-IN';
+    // en-US: guarantees Roman script output — Hindi words like "paanch sau gram"
+    // get transcribed in Roman letters, which normaliseRomanHindi then converts
+    rec.lang = 'en-US';
     rec.interimResults = true;
     rec.continuous = false;
     const box = document.getElementById(boxId);
@@ -1066,6 +1092,7 @@
     btn.textContent = '● Listening…';
     document.getElementById(statusId).textContent = '';
     box.focus();
+    let lastFinal = '';
     rec.onresult = e => {
       let interim = '', final = '';
       for (let i = 0; i < e.results.length; i++) {
@@ -1073,7 +1100,10 @@
         if (e.results[i].isFinal) final += t;
         else interim += t;
       }
-      const normalised = normaliseHindi(final || interim);
+      if (final) lastFinal = final;
+      // Show live interim in box
+      const raw = final || interim;
+      const normalised = normaliseRomanHindi(raw);
       const combined = transform(normalised);
       box.value = baseText ? baseText + '\n' + combined : combined;
       box.scrollTop = box.scrollHeight;
@@ -1085,7 +1115,13 @@
     };
     rec.onend = () => {
       btn._rec = null; btn.classList.remove('recording'); btn.textContent = '🎤 Speak';
-      setTimeout(() => document.getElementById(statusId).textContent = '', 2000);
+      // If result contains Devanagari, send to Claude to translate to English
+      if (lastFinal && hasDevanagari(lastFinal)) {
+        box.value = baseText; // clear the Devanagari from box first
+        translateToEnglish(lastFinal, boxId, baseText, statusId, transform);
+      } else {
+        setTimeout(() => document.getElementById(statusId).textContent = '', 2000);
+      }
     };
     rec.start();
   }
@@ -2035,49 +2071,44 @@ Use categories: Proteins, Vegetables, Fruits, Dairy & Bread, Grains & Carbs, Oil
   // ══════════ SYNC ══════════
   async function syncAll(){
     showToast('Syncing…','info');
-    const inv=await sheetGet('getInventory');
+    // Fire all Sheet requests in parallel — ~5x faster than sequential awaits
+    const [inv, ml, mac, prefs, wk] = await Promise.all([
+      sheetGet('getInventory'),
+      sheetGet('getMealLog'),
+      sheetGet('getMacros'),
+      sheetGet('getPreferences'),
+      sheetGet('getWorkoutLog')
+    ]);
+    // Inventory
     if(inv&&inv.items){ inventory=inv.items.map(i=>({name:i.item,qty:i.quantity,updatedBy:i.updatedBy})); renderInventory(); }
-    const ml=await sheetGet('getMealLog');
+    // Meal log
     if(ml&&ml.meals){ mealLog=ml.meals.map(m=>({dish:m.mealName,time:m.date,date:(m.date||'').slice(0,10),loggedBy:m.loggedBy,mealType:m.mealType})); renderMealLog(); }
-    const mac=await sheetGet('getMacros');
+    // Macros — Sheet is source of truth for member list
     if(mac&&mac.macros&&mac.macros.length){
-      // Sheet is source of truth for member list — merge Sheet members into local profiles
-      // preserving any locally-stored preferences (diet/likes/dislikes) for existing members
       const sheetNames = mac.macros.map(r=>r.person);
-      // Add any Sheet members not in local profiles
       mac.macros.forEach(row=>{
-        if(!memberProfiles[row.person]){
-          // New member from Sheet — create with defaults for fields not stored in Sheet
+        if(!memberProfiles[row.person])
           memberProfiles[row.person]={diet:'Not set',likes:'',dislikes:'',allergies:'None',age:25,height:175};
-        }
-        // Always update numeric stats from Sheet (source of truth)
-        Object.assign(memberProfiles[row.person],{
-          cal:row.calories, protein:row.protein, carbs:row.carbs, fat:row.fat, weight:row.weight
-        });
+        Object.assign(memberProfiles[row.person],{cal:row.calories,protein:row.protein,carbs:row.carbs,fat:row.fat,weight:row.weight});
       });
-      // Remove members that no longer exist in Sheet (were removed on another device)
-      Object.keys(memberProfiles).forEach(name=>{
-        if(!sheetNames.includes(name)) delete memberProfiles[name];
-      });
+      // Remove members deleted on another device
+      Object.keys(memberProfiles).forEach(name=>{ if(!sheetNames.includes(name)) delete memberProfiles[name]; });
       saveProfilesLocal(); rebuildPersonMacros();
       renderProfilePersonToggle(); renderMemberPills(); renderWorkoutMemberToggle(); renderMembersList(); renderUserModalButtons();
     }
-    // Sync preferences (diet/likes/dislikes/allergies) from Sheet
-    const prefs=await sheetGet('getPreferences');
+    // Preferences
     if(prefs&&prefs.preferences&&prefs.preferences.length){
       prefs.preferences.forEach(row=>{
         if(memberProfiles[row.person]){
-          // Only overwrite if Sheet has non-empty value (don't blank out local data)
-          if(row.diet)     memberProfiles[row.person].diet     = row.diet;
-          if(row.likes)    memberProfiles[row.person].likes    = row.likes;
-          if(row.dislikes) memberProfiles[row.person].dislikes = row.dislikes;
-          if(row.allergies)memberProfiles[row.person].allergies= row.allergies;
+          if(row.diet)      memberProfiles[row.person].diet      = row.diet;
+          if(row.likes)     memberProfiles[row.person].likes     = row.likes;
+          if(row.dislikes)  memberProfiles[row.person].dislikes  = row.dislikes;
+          if(row.allergies) memberProfiles[row.person].allergies = row.allergies;
         }
       });
-      saveProfilesLocal();
-      renderCurrentPrefs();
+      saveProfilesLocal(); renderCurrentPrefs();
     }
-    const wk=await sheetGet('getWorkoutLog');
+    // Workouts
     if(wk&&wk.workouts){ workoutLog=wk.workouts.map(w=>({date:(w.date||'').slice(0,10),loggedBy:w.person,exercise:w.exercise,muscleGroup:w.muscleGroup,sets:safeParseSets(w.sets),totalVolume:w.totalVolume,caloriesBurned:w.caloriesBurned})); renderWorkoutUI(); }
     showToast('Synced ✓','success');
   }
@@ -2097,9 +2128,13 @@ Use categories: Proteins, Vegetables, Fruits, Dairy & Bread, Grains & Carbs, Oil
       loadPersonIntoUI();
       syncAll().then(()=>loadDayProgress());
     } else {
-      // Fresh device — sync from Sheet first so all members appear in the modal
+      // Fresh device — show modal immediately with loading state, populate after sync
+      const modal = document.getElementById('user-modal');
+      const btns  = document.getElementById('user-modal-buttons');
+      btns.innerHTML = '<div style="font-size:13px;color:var(--text2);padding:8px 0;">Loading members<span class="loading-dots"></span></div>';
+      modal.style.display = 'flex';
       syncAll().then(()=>{
-        document.getElementById('user-modal').style.display='flex';
+        renderUserModalButtons();
         loadPersonIntoUI();
       });
     }
