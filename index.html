@@ -1027,25 +1027,44 @@
   let invRec = null;
   function toggleInvMic() { toggleMic('inv-box','inv-mic','inv-input-status', v=>v); }
 
-  // Generic mic helper — streams interim results live into box
+  // ══════════ HINDI ↔ ENGLISH NORMALISATION ══════════
+  // Converts Hindi spoken words to numbers/units
+  // "paanch sau gram paneer" → "500 g paneer"
+  function normaliseHindi(text) {
+    const ones = {ek:1,do:2,teen:3,tin:3,chaar:4,char:4,paanch:5,panch:5,chheh:6,chhe:6,saat:7,sat:7,aath:8,nau:9,das:10,gyarah:11,barah:12,terah:13,chaudah:14,pandrah:15,solah:16,satrah:17,atharah:18,unnis:19,bees:20,tees:30,chalis:40,pachaas:50,saath:60,sattar:70,assi:80,nabbe:90};
+    const mults = {sau:100,hazaar:1000,lakh:100000};
+    const unitMap = {gram:'g',grams:'g',graam:'g',kilo:'kg',kilogram:'kg',kilograms:'kg',litre:'L',liter:'L',litres:'L',liters:'L',milligram:'mg',milligrams:'mg',piece:'pcs',pieces:'pcs',packet:'pkt',packets:'pkt'};
+    let t = text.toLowerCase().trim();
+    Object.entries(unitMap).forEach(([h,e]) => { t = t.replace(new RegExp('\\b'+h+'\\b','gi'), e); });
+    const tokens = t.split(/\s+/);
+    const out = []; let num = 0, hasNum = false;
+    for (const tok of tokens) {
+      if (ones[tok] !== undefined)       { num += ones[tok]; hasNum = true; }
+      else if (mults[tok] !== undefined) { if (!hasNum) num = 1; num *= mults[tok]; hasNum = true; }
+      else { if (hasNum) { out.push(String(num)); num = 0; hasNum = false; } out.push(tok); }
+    }
+    if (hasNum) out.push(String(num));
+    return out.join(' ').replace(/\s+/g,' ').trim();
+  }
+
+  // Generic mic helper — bilingual hi-IN (handles Hindi + English + Hinglish)
+  // with live interim streaming and Hindi number normalisation
   function toggleMic(boxId, btnId, statusId, transform) {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { showToast('Voice not supported in this browser','error'); return; }
     const btn = document.getElementById(btnId);
-    // If already recording, stop it
     if (btn._rec) { btn._rec.stop(); return; }
     const rec = new SR();
-    rec.lang = 'en-IN';
-    rec.interimResults = true;   // stream partial results
+    // hi-IN handles Hindi numbers, Hindi words, English words, and Hinglish mixed
+    rec.lang = 'hi-IN';
+    rec.interimResults = true;
     rec.continuous = false;
-    // Snapshot of what was in the box before we started speaking
     const box = document.getElementById(boxId);
     const baseText = box.value.trim();
     btn._rec = rec;
     btn.classList.add('recording');
     btn.textContent = '● Listening…';
     document.getElementById(statusId).textContent = '';
-    // Instant visual: show cursor in box
     box.focus();
     rec.onresult = e => {
       let interim = '', final = '';
@@ -1054,10 +1073,9 @@
         if (e.results[i].isFinal) final += t;
         else interim += t;
       }
-      // Show live text in box (interim in grey via placeholder trick)
-      const combined = transform(final || interim);
+      const normalised = normaliseHindi(final || interim);
+      const combined = transform(normalised);
       box.value = baseText ? baseText + '\n' + combined : combined;
-      // Scroll box to bottom
       box.scrollTop = box.scrollHeight;
       if (final) document.getElementById(statusId).textContent = '✓ Done';
     };
@@ -1066,9 +1084,7 @@
       btn._rec = null; btn.classList.remove('recording'); btn.textContent = '🎤 Speak';
     };
     rec.onend = () => {
-      btn._rec = null;
-      btn.classList.remove('recording');
-      btn.textContent = '🎤 Speak';
+      btn._rec = null; btn.classList.remove('recording'); btn.textContent = '🎤 Speak';
       setTimeout(() => document.getElementById(statusId).textContent = '', 2000);
     };
     rec.start();
@@ -2012,6 +2028,8 @@ Use categories: Proteins, Vegetables, Fruits, Dairy & Bread, Grains & Carbs, Oil
     document.getElementById('user-modal').style.display='none';
     loadPersonIntoUI(); renderProfilePersonToggle(); renderMembersList(); renderMemberPills(); renderWorkoutMemberToggle();
     showToast('Welcome, '+name+'!','success');
+    // Sync from Sheet so new members added on other devices appear immediately
+    syncAll().then(()=>loadDayProgress());
   }
 
   // ══════════ SYNC ══════════
@@ -2079,8 +2097,11 @@ Use categories: Proteins, Vegetables, Fruits, Dairy & Bread, Grains & Carbs, Oil
       loadPersonIntoUI();
       syncAll().then(()=>loadDayProgress());
     } else {
-      document.getElementById('user-modal').style.display='flex';
-      loadPersonIntoUI();
+      // Fresh device — sync from Sheet first so all members appear in the modal
+      syncAll().then(()=>{
+        document.getElementById('user-modal').style.display='flex';
+        loadPersonIntoUI();
+      });
     }
   }
   init();
