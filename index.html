@@ -505,6 +505,7 @@
     <div id="meal-suggestion-wrap" style="display:none;">
       <div class="label">Suggestions</div>
       <div id="meal-output"></div>
+      <div id="meal-quick-log" style="display:none;margin-top:10px;"></div>
       <div id="maid-table-wrap" class="card" style="display:none;margin-top:10px;"></div>
     </div>
 
@@ -1028,61 +1029,17 @@
   function toggleInvMic() { toggleMic('inv-box','inv-mic','inv-input-status', v=>v); }
 
   // ══════════ VOICE — HINDI + ENGLISH INPUT ══════════
-  // Detects if transcript contains Devanagari (actual Hindi script from hi-IN recogniser)
-  function hasDevanagari(text) { return /[\u0900-\u097F]/.test(text); }
+  // Strategy: use hi-IN recogniser (best for Indian speech, handles Hinglish).
+  // Show raw transcript live. On stop, always send through Claude to
+  // normalise to English item lines. Cost: ~$0.001 per voice input.
 
-  // Romanised Hindi number/unit words → English output
-  // Works when en-IN recogniser returns "paanch sau gram" (roman letters)
-  function normaliseRomanHindi(text) {
-    const ones = {ek:1,do:2,teen:3,tin:3,chaar:4,char:4,paanch:5,panch:5,chheh:6,chhe:6,saat:7,sat:7,aath:8,nau:9,das:10,gyarah:11,barah:12,terah:13,chaudah:14,pandrah:15,solah:16,satrah:17,atharah:18,unnis:19,bees:20,tees:30,chalis:40,pachaas:50,saath:60,sattar:70,assi:80,nabbe:90};
-    const mults = {sau:100,hazaar:1000,lakh:100000};
-    const unitMap = {gram:'g',grams:'g',graam:'g',kilo:'kg',kilogram:'kg',kilograms:'kg',litre:'L',liter:'L',litres:'L',liters:'L',milligram:'mg',milligrams:'mg',piece:'pcs',pieces:'pcs',packet:'pkt',packets:'pkt'};
-    let t = text.toLowerCase().trim();
-    Object.entries(unitMap).forEach(([h,e]) => { t = t.replace(new RegExp('\\b'+h+'\\b','gi'), e); });
-    const tokens = t.split(/\s+/);
-    const out = []; let num = 0, hasNum = false;
-    for (const tok of tokens) {
-      if (ones[tok] !== undefined)       { num += ones[tok]; hasNum = true; }
-      else if (mults[tok] !== undefined) { if (!hasNum) num = 1; num *= mults[tok]; hasNum = true; }
-      else { if (hasNum) { out.push(String(num)); num = 0; hasNum = false; } out.push(tok); }
-    }
-    if (hasNum) out.push(String(num));
-    return out.join(' ').replace(/\s+/g,' ').trim();
-  }
-
-  // If Devanagari detected, use Claude to translate to English item list
-  async function translateToEnglish(text, boxId, baseText, statusId, transform) {
-    const statusEl = document.getElementById(statusId);
-    statusEl.textContent = 'Translating…';
-    try {
-      const result = await callClaudeRaw(
-        `The user spoke this in Hindi: "${text}"
-Convert it to an English grocery/food item list. Output only the item names with quantities on separate lines, like:
-Paneer, 500g
-Milk, 1L
-Eggs, 12 pcs
-No explanations, no Hindi, just clean English item lines.`, 150);
-      const box = document.getElementById(boxId);
-      const combined = transform(result.trim());
-      box.value = baseText ? baseText + '\n' + combined : combined;
-      box.scrollTop = box.scrollHeight;
-      statusEl.textContent = '✓ Done';
-      setTimeout(() => statusEl.textContent = '', 2000);
-    } catch(e) {
-      statusEl.textContent = 'Translation failed';
-    }
-  }
-
-  // Generic mic helper — en-IN for romanised input, Claude fallback for Devanagari
   function toggleMic(boxId, btnId, statusId, transform) {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { showToast('Voice not supported in this browser','error'); return; }
     const btn = document.getElementById(btnId);
     if (btn._rec) { btn._rec.stop(); return; }
     const rec = new SR();
-    // en-US: guarantees Roman script output — Hindi words like "paanch sau gram"
-    // get transcribed in Roman letters, which normaliseRomanHindi then converts
-    rec.lang = 'en-US';
+    rec.lang = 'hi-IN';      // best for Indian speech — handles Hindi, Hinglish, English
     rec.interimResults = true;
     rec.continuous = false;
     const box = document.getElementById(boxId);
@@ -1101,27 +1058,39 @@ No explanations, no Hindi, just clean English item lines.`, 150);
         else interim += t;
       }
       if (final) lastFinal = final;
-      // Show live interim in box
+      // Show raw transcript live so user sees something immediately
       const raw = final || interim;
-      const normalised = normaliseRomanHindi(raw);
-      const combined = transform(normalised);
-      box.value = baseText ? baseText + '\n' + combined : combined;
+      box.value = baseText ? baseText + '\n' + raw : raw;
       box.scrollTop = box.scrollHeight;
-      if (final) document.getElementById(statusId).textContent = '✓ Done';
+      if (final) document.getElementById(statusId).textContent = 'Processing…';
     };
     rec.onerror = e => {
       document.getElementById(statusId).textContent = e.error === 'no-speech' ? 'No speech detected' : 'Voice error';
       btn._rec = null; btn.classList.remove('recording'); btn.textContent = '🎤 Speak';
     };
-    rec.onend = () => {
+    rec.onend = async () => {
       btn._rec = null; btn.classList.remove('recording'); btn.textContent = '🎤 Speak';
-      // If result contains Devanagari, send to Claude to translate to English
-      if (lastFinal && hasDevanagari(lastFinal)) {
-        box.value = baseText; // clear the Devanagari from box first
-        translateToEnglish(lastFinal, boxId, baseText, statusId, transform);
-      } else {
-        setTimeout(() => document.getElementById(statusId).textContent = '', 2000);
+      if (!lastFinal) { setTimeout(() => document.getElementById(statusId).textContent = '', 2000); return; }
+      // Always send through Claude — converts Hindi/Hinglish/English to clean English item lines
+      document.getElementById(statusId).textContent = 'Converting…';
+      try {
+        const result = await callClaudeRaw(
+          `The user spoke this (may be Hindi, Hinglish, or English): "${lastFinal}"
+Convert to clean English food/grocery items with quantities, one per line. Examples:
+Paneer, 500g
+Milk, 1L
+Eggs, 12 pcs
+Chicken breast, 300g
+Output ONLY the item lines. No Hindi, no explanations, no bullet points.`, 200);
+        const combined = transform(result.trim());
+        box.value = baseText ? baseText + '\n' + combined : combined;
+        box.scrollTop = box.scrollHeight;
+        document.getElementById(statusId).textContent = '✓ Done';
+      } catch(e) {
+        // If Claude fails, keep raw transcript so user isn't left with nothing
+        document.getElementById(statusId).textContent = '✓ (raw)';
       }
+      setTimeout(() => document.getElementById(statusId).textContent = '', 2000);
     };
     rec.start();
   }
@@ -1215,9 +1184,11 @@ No explanations, no Hindi, just clean English item lines.`, 150);
     const note = document.getElementById('meal-note').value;
     if (!eatingMembers.length){ showToast('Select at least one member','error'); return; }
     document.getElementById('meal-suggestion-wrap').style.display='block';
-    // Hide stale maid table while loading
+    // Hide stale maid table + quick-log buttons while loading
     const maidWrap = document.getElementById('maid-table-wrap');
     if (maidWrap) { maidWrap.style.display='none'; }
+    const qlWrap = document.getElementById('meal-quick-log');
+    if (qlWrap) { qlWrap.style.display='none'; }
 
     const summary = eatingMembers.map(name=>{
       const p = memberProfiles[name]; const m = personMacros.find(x=>x.person===name)||{};
@@ -1235,8 +1206,52 @@ Suggest 1-2 dishes that work for everyone. Format your response in clean markdow
 Keep it tight. No preamble.`;
     const rawSuggestion = await callClaudeInto(prompt, 'meal-output', 1200);
 
+    // One-click log buttons — render immediately, don't wait on maid table's extra API call
+    renderQuickLogButtons(rawSuggestion, eatingMembers.slice());
+
     // Now fetch Hindi maid summary — pass raw text directly, no DOM scraping
     await buildMaidTable(rawSuggestion);
+  }
+
+  // ══════════ ONE-CLICK MEAL LOGGING ══════════
+  // Extracts dish names from the suggestion markdown and offers a single-tap
+  // "I ate this" log per dish, pre-filled with the members the suggestion was for.
+  function renderQuickLogButtons(rawSuggestion, eaters) {
+    const wrap = document.getElementById('meal-quick-log');
+    if (!wrap) return;
+    if (!rawSuggestion || !eaters || !eaters.length) { wrap.style.display='none'; return; }
+
+    const dishNames = [...rawSuggestion.matchAll(/^#{1,3}\s+(.+)$/gm)]
+      .map(m => m[1].replace(/\*\*/g,'').replace(/\(.*?\)/g,'').trim())
+      .filter(Boolean);
+    if (!dishNames.length) { wrap.style.display='none'; return; }
+
+    window._quickLogDishes = dishNames;
+    window._quickLogEaters = eaters;
+
+    wrap.style.display = 'block';
+    wrap.innerHTML = `<div style="font-size:11px;color:var(--text2);margin-bottom:6px;">One tap for ${eaters.join(', ')} — logs the meal and deducts inventory</div>` +
+      dishNames.map((d,i) => `<button class="btn btn-sm btn-primary" id="ql-btn-${i}" style="margin:0 6px 6px 0;" onclick="quickLogDish(${i})">✅ We ate: ${d}</button>`).join('') +
+      `<div style="font-size:11px;color:var(--text3);margin-top:2px;">Wrong people or portion? Use "Log a meal" below instead.</div>`;
+  }
+
+  async function quickLogDish(i) {
+    const dish = (window._quickLogDishes||[])[i];
+    const eaters = window._quickLogEaters||[];
+    const btn = document.getElementById('ql-btn-'+i);
+    if (!dish || !eaters.length) return;
+    if (btn) { btn.disabled = true; btn.textContent = 'Logging…'; }
+
+    const today=getISTToday(), now=getISTDatetime();
+    for (const m of eaters) {
+      mealLog.unshift({ dish, qty:'', time:now, date:today, loggedBy:m, mealType:'Home cooked', macros:null });
+      await sheetPost({ action:'logMeal', mealName: dish, mealType:'Home cooked', loggedBy:m, notes:'' });
+    }
+    renderMealLog();
+    showToast('Logged "'+dish+'" for '+eaters.join(', ')+' ✓','success');
+    if (btn) { btn.textContent = '✓ Logged'; }
+
+    await deductInventory(dish, '', eaters.length);
   }
 
   async function buildMaidTable(rawSuggestion) {
