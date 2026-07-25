@@ -351,6 +351,7 @@
     .inv-group-title.cat-prot  { color: #791f1f; background: #fcebeb; border-left-color: #c94040; }
     .inv-group-title.cat-dairy { color: #0c447c; background: #e6f1fb; border-left-color: #3a8fd1; }
     .inv-group-title.cat-grain { color: #5a3d00; background: #faeeda; border-left-color: #c49020; }
+    .inv-group-title.cat-bev   { color: #0a4a4a; background: #e2f4f4; border-left-color: #2fa3a3; }
     .inv-group-title.cat-oil   { color: #2a3d00; background: #edf4dc; border-left-color: #7aaa30; }
     .inv-group-title.cat-spice { color: #6b1f00; background: #fde8de; border-left-color: #d05020; }
     .inv-group-title.cat-supp  { color: #1a3060; background: #e2eaf8; border-left-color: #4060c0; }
@@ -418,6 +419,19 @@
   </div>
 </div>
 
+<!-- Reset Inventory Confirmation Modal -->
+<div id="reset-inventory-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center;">
+  <div style="background:var(--surface);border-radius:var(--radius-lg);padding:1.5rem;max-width:360px;width:90%;border:0.5px solid var(--border);text-align:center;">
+    <div style="font-size:17px;font-weight:600;margin-bottom:6px;">Reset inventory?</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:14px;" id="reset-inventory-modal-text"></div>
+    <div style="max-height:140px;overflow-y:auto;text-align:left;background:var(--surface2);border-radius:var(--radius);padding:8px 10px;margin-bottom:16px;font-size:12px;color:var(--text2);" id="reset-inventory-modal-list"></div>
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-full" onclick="closeResetInventoryModal()">Cancel</button>
+      <button class="btn btn-full" style="background:var(--red-bg);color:var(--red-text);border-color:transparent;font-weight:600;" onclick="performInventoryReset()">Yes, clear it all</button>
+    </div>
+  </div>
+</div>
+
 <div class="topbar">
   <div class="topbar-inner">
     <div class="logo">Nutrition OS <span>· Gurugram flat</span></div>
@@ -431,6 +445,17 @@
   </div>
 </div>
 
+<div id="activity-nudge" style="display:none;background:var(--surface2);border-bottom:0.5px solid var(--border);padding:10px 16px;">
+  <div style="max-width:720px;margin:0 auto;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+    <div style="font-size:12px;color:var(--text2);" id="activity-nudge-text"></div>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <button class="btn btn-sm btn-primary" onclick="switchTab('inventory'); dismissNudge();">Update inventory</button>
+      <button class="btn btn-sm" onclick="switchTab('meals'); dismissNudge();">Log a meal</button>
+      <button class="icon-btn" style="padding:2px 6px;" onclick="dismissNudge()" title="Dismiss">×</button>
+    </div>
+  </div>
+</div>
+
 <main class="main">
 
   <!-- ══ INVENTORY ══ -->
@@ -440,7 +465,10 @@
 
     <!-- Current inventory, grouped -->
     <div class="card">
-      <div class="label">Current items</div>
+      <div class="label" style="display:flex;justify-content:space-between;align-items:center;">
+        <span>Current items</span>
+        <button class="btn btn-sm" style="font-weight:500;" onclick="confirmResetInventory()">↺ Reset inventory</button>
+      </div>
       <div id="inventory-grouped">
         <div style="font-size:13px;color:var(--text3);">Nothing added yet — add items below or tap Sync.</div>
       </div>
@@ -831,9 +859,10 @@
     'Grains & Carbs': ['rice','chawal','oats','poha','quinoa','pasta','noodle','vermicelli','sewai','daliya','millet','bajra','jowar','ragi','sabudana','cornflakes','muesli'],
     'Supplements': ['whey','protein powder','creatine','bcaa','vitamin','omega','fish oil','multivitamin','magnesium','zinc','biotin','collagen','pre workout','preworkout','glutamine','isabgol'],
     'Oils & Condiments': ['oil','tel','olive','mustard','sarson','ketchup','sauce','vinegar','mayonnaise','mayo','honey','shahad','jam','pickle','achar','chutney','peanut butter'],
+    'Beverages': ['water','sparkling','soda','juice','cola','coke','pepsi','tea','chai','coffee','kombucha','energy drink','shake','nimbu pani','buttermilk drink','coconut water','squash','cordial'],
     'Spices': ['salt','namak','sugar','cheeni','turmeric','haldi','cumin','jeera','coriander powder','garam masala','chilli powder','red chilli','black pepper','kali mirch','cardamom','elaichi','cinnamon','dalchini','clove','laung','bay leaf','tej patta','mustard seed','fenugreek','asafoetida','hing','fennel','saunf','ajwain','masala','baking soda','baking powder']
   };
-  const CATEGORY_ORDER = ['Vegetables','Fruits','Proteins','Dairy & Bread','Grains & Carbs','Oils & Condiments','Spices','Supplements','Other'];
+  const CATEGORY_ORDER = ['Vegetables','Fruits','Proteins','Dairy & Bread','Grains & Carbs','Beverages','Oils & Condiments','Spices','Supplements','Other'];
 
   function categorize(name) {
     const n = (name||'').toLowerCase();
@@ -849,6 +878,18 @@
   }
   function getISTDatetime() {
     return new Intl.DateTimeFormat('en-IN', { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hour12:true, timeZone:'Asia/Kolkata' }).format(new Date());
+  }
+  // Parses the en-IN locale strings the Sheet stores (e.g. "26/7/2026, 2:32:15 pm" or
+  // "26/07/2026, 02:32 pm") into a real Date. Native `new Date(str)` isn't reliable across
+  // browsers for this DD/MM/YYYY format, so this is hand-rolled rather than relying on it.
+  function parseISTString(s) {
+    if (!s) return null;
+    const m = String(s).match(/(\d{1,2})\/(\d{1,2})\/(\d{4}),?\s*(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?/i);
+    if (!m) return null;
+    let [, d, mo, y, h, mi, se, ap] = m;
+    h = +h;
+    if (ap) { const isPM = /pm/i.test(ap); if (isPM && h<12) h+=12; if (!isPM && h===12) h=0; }
+    return new Date(+y, +mo-1, +d, h, +mi, +(se||0));
   }
 
   // ══════════ SHEET API ══════════
@@ -954,6 +995,7 @@
     'Proteins':        { emoji:'🥩', cls:'cat-prot'   },
     'Dairy & Bread':   { emoji:'🥛', cls:'cat-dairy'  },
     'Grains & Carbs':  { emoji:'🌾', cls:'cat-grain'  },
+    'Beverages':       { emoji:'🥤', cls:'cat-bev'    },
     'Oils & Condiments':{ emoji:'🫙', cls:'cat-oil'   },
     'Spices':          { emoji:'🌶️', cls:'cat-spice'  },
     'Supplements':     { emoji:'💊', cls:'cat-supp'   },
@@ -987,6 +1029,26 @@
     inventory.splice(i,1);
     renderInventory();
     await sheetPost({ action:'removeInventoryItem', item:name });
+  }
+
+  // Wipes inventory locally + on the Sheet, for a fresh start (e.g. stale/old list, new household setup)
+  function confirmResetInventory() {
+    if (!inventory.length) { showToast('Inventory is already empty','info'); return; }
+    document.getElementById('reset-inventory-modal-text').textContent =
+      `This clears all ${inventory.length} item${inventory.length>1?'s':''} below from everyone's inventory. This can't be undone.`;
+    document.getElementById('reset-inventory-modal-list').innerHTML =
+      inventory.map(i=>`<div style="padding:2px 0;">${i.name}${i.qty?' — '+i.qty:''}</div>`).join('');
+    document.getElementById('reset-inventory-modal').style.display='flex';
+  }
+  function closeResetInventoryModal() {
+    document.getElementById('reset-inventory-modal').style.display='none';
+  }
+  async function performInventoryReset() {
+    closeResetInventoryModal();
+    inventory = [];
+    renderInventory();
+    await sheetPost({ action:'setInventory', items: [] });
+    showToast('Inventory reset — add items to start fresh ✓','success');
   }
 
   // Quick add chips — clicking appends to the box (not direct commit)
@@ -1198,19 +1260,56 @@ Output ONLY the item lines. No Hindi, no explanations, no bullet points.`, 200);
     const prevNote = prev.length? 'Recently cooked (avoid repeating): '+prev.join(', ')+'.' : '';
 
     const prompt = `You are a nutrition-aware meal planner for young men in Gurugram who gym 3-4x/week for body recomposition. The cook is a household maid — suggest only simple practical Indian home cooking. Planning for ${eatingMembers.length}: ${eatingMembers.join(', ')}. Profiles: ${summary}. Inventory: ${getInventoryText()}. Meal: ${meal}. Preferences: ${prefs}. Notes: ${note||'none'}. ${prevNote}
-Suggest 1-2 dishes that work for everyone. Format your response in clean markdown with this structure for EACH dish:
+Suggest exactly 5 varied dishes that work for everyone (no near-duplicates). Format your response in clean markdown with this EXACT structure, repeated for all 5 dishes — do not add any title, intro, or heading above the first dish (no "Breakfast Plan", no "Suggestions", nothing): the very first line of your response must be "## " followed by the first dish name.
 ## Dish name (English + Hindi)
 **Ingredients:** list with quantities
 **Steps:** numbered 2-4 simple steps
 **Portions:** one line per person with portion size and protein/kcal estimate
-Keep it tight. No preamble.`;
-    const rawSuggestion = await callClaudeInto(prompt, 'meal-output', 1200);
+Keep each dish tight. No preamble, no closing notes.`;
+    const rawSuggestion = await callClaudeMealSuggestions(prompt, 'meal-output', 2200);
 
     // One-click log buttons — render immediately, don't wait on maid table's extra API call
     renderQuickLogButtons(rawSuggestion, eatingMembers.slice());
 
     // Now fetch Hindi maid summary — pass raw text directly, no DOM scraping
     await buildMaidTable(rawSuggestion);
+  }
+
+  // Splits Claude's "## Dish name\n**Ingredients:**...\n**Steps:**...\n**Portions:**..." output
+  // into per-dish blocks. Single source of truth for both the collapsible dish list and quick-log buttons.
+  function parseDishBlocks(text) {
+    if (!text) return [];
+    const regex = /^##\s+(.+)$/gm;
+    const headers = [];
+    let match;
+    while ((match = regex.exec(text))) headers.push({ idx: match.index, len: match[0].length, raw: match[1].trim() });
+    return headers.map((h,i)=>{
+      const end = i+1 < headers.length ? headers[i+1].idx : text.length;
+      const body = text.slice(h.idx + h.len, end).trim();
+      const cleanName = h.raw.replace(/\*\*/g,'').replace(/\(.*?\)/g,'').trim();
+      return { name: cleanName, rawName: h.raw.replace(/\*\*/g,'').trim(), body };
+    });
+  }
+
+  // Renders just the 5 dish names as collapsible cards — tap a dish to reveal
+  // ingredients/steps/portions. Keeps the default view clean and scannable.
+  async function callClaudeMealSuggestions(prompt, elId, maxTokens) {
+    const box = document.getElementById(elId);
+    box.className = 'ai-box loading';
+    box.innerHTML = '<span class="loading-dots">Thinking</span>';
+    try {
+      const text = await callClaudeRaw(prompt, maxTokens);
+      box.className = 'ai-box';
+      const dishes = parseDishBlocks(text);
+      if (!dishes.length) { box.innerHTML = renderClean(text); return text; }
+      box.innerHTML = dishes.map(d => `
+        <details class="dish-card" style="margin-bottom:8px;border:0.5px solid var(--border);border-radius:var(--radius);padding:10px 12px;">
+          <summary style="cursor:pointer;font-weight:600;font-size:14px;">🍽️ ${d.rawName}</summary>
+          <div style="margin-top:8px;">${renderClean(d.body)}</div>
+        </details>`).join('') +
+        `<div style="font-size:11px;color:var(--text3);margin-top:2px;">Tap a dish to see ingredients, steps &amp; portions.</div>`;
+      return text;
+    } catch(e){ box.className='ai-box'; box.textContent='Error: '+e.message; return null; }
   }
 
   // ══════════ ONE-CLICK MEAL LOGGING ══════════
@@ -1221,9 +1320,7 @@ Keep it tight. No preamble.`;
     if (!wrap) return;
     if (!rawSuggestion || !eaters || !eaters.length) { wrap.style.display='none'; return; }
 
-    const dishNames = [...rawSuggestion.matchAll(/^#{1,3}\s+(.+)$/gm)]
-      .map(m => m[1].replace(/\*\*/g,'').replace(/\(.*?\)/g,'').trim())
-      .filter(Boolean);
+    const dishNames = parseDishBlocks(rawSuggestion).map(d => d.name).filter(Boolean);
     if (!dishNames.length) { wrap.style.display='none'; return; }
 
     window._quickLogDishes = dishNames;
@@ -1266,12 +1363,12 @@ Keep it tight. No preamble.`;
     const jsonPrompt = `Extract dish info from this meal suggestion and return ONLY a JSON object. No markdown, no backticks, no explanation. Just raw JSON.
 
 Meal suggestion text:
-${mainText.slice(0,1500)}
+${mainText.slice(0,2500)}
 
-Return this exact structure (fill in real values in Hindi where noted):
-{"dishes":[{"name_hi":"dish name in Hindi script","for_whom":"e.g. सबके लिए or Rakshit के लिए","ingredients_hi":"3-5 key ingredients in Hindi with quantities e.g. पनीर 300g, टमाटर 2, प्याज़ 1","protein_kcal":"e.g. ~28g protein, 380 kcal"}]}`;
+Return this exact structure (fill in real values in Hindi where noted), one entry per dish:
+{"dishes":[{"name_hi":"dish name in Hindi script","for_whom":"e.g. सबके लिए or Rakshit के लिए","ingredients_hi":"ingredients with quantities for the stated number of people, in Hindi, e.g. पनीर 300g, टमाटर 2, प्याज़ 1"}]}`;
     try {
-      const raw = await callClaudeRaw(jsonPrompt, 400);
+      const raw = await callClaudeRaw(jsonPrompt, 700);
       const clean = raw.replace(/```json|```/g,'').trim();
       const parsed = JSON.parse(clean);
       if (!parsed.dishes || !parsed.dishes.length) throw new Error('empty');
@@ -1288,7 +1385,6 @@ Return this exact structure (fill in real values in Hindi where noted):
         <td style="padding:10px 12px;border-bottom:0.5px solid var(--border);font-weight:600;font-size:14px;">${d.name_hi}</td>
         <td style="padding:10px 12px;border-bottom:0.5px solid var(--border);font-size:13px;color:var(--text2);">${d.for_whom}</td>
         <td style="padding:10px 12px;border-bottom:0.5px solid var(--border);font-size:13px;">${d.ingredients_hi}</td>
-        <td style="padding:10px 12px;border-bottom:0.5px solid var(--border);font-size:12px;color:var(--text2);white-space:nowrap;">${d.protein_kcal}</td>
       </tr>`
     ).join('');
 
@@ -1304,7 +1400,6 @@ Return this exact structure (fill in real values in Hindi where noted):
               <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--text2);">डिश</th>
               <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--text2);">किसके लिए</th>
               <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--text2);">सामग्री</th>
-              <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--text2);">Protein/Kcal</th>
             </tr>
           </thead>
           <tbody>${tableRows}</tbody>
@@ -1319,7 +1414,7 @@ Return this exact structure (fill in real values in Hindi where noted):
     const dishes = maidWrap._dishes;
     if (!dishes) return;
     const lines = dishes.map(d =>
-      `🍽️ *${d.name_hi}*\n👥 ${d.for_whom}\n🛒 ${d.ingredients_hi}\n💪 ${d.protein_kcal}`
+      `🍽️ *${d.name_hi}*\n👥 ${d.for_whom}\n🛒 ${d.ingredients_hi}`
     ).join('\n\n');
     const text = `📋 *आज का खाना*\n\n${lines}\n\n_Nutrition OS से भेजा गया_`;
     navigator.clipboard.writeText(text).then(()=>{
@@ -2080,7 +2175,7 @@ Use categories: Proteins, Vegetables, Fruits, Dairy & Bread, Grains & Carbs, Oil
     loadPersonIntoUI(); renderProfilePersonToggle(); renderMembersList(); renderMemberPills(); renderWorkoutMemberToggle();
     showToast('Welcome, '+name+'!','success');
     // Sync from Sheet so new members added on other devices appear immediately
-    syncAll().then(()=>loadDayProgress());
+    syncAll().then(()=>{ loadDayProgress(); checkActivityNudge(); });
   }
 
   // ══════════ SYNC ══════════
@@ -2095,7 +2190,7 @@ Use categories: Proteins, Vegetables, Fruits, Dairy & Bread, Grains & Carbs, Oil
       sheetGet('getWorkoutLog')
     ]);
     // Inventory
-    if(inv&&inv.items){ inventory=inv.items.map(i=>({name:i.item,qty:i.quantity,updatedBy:i.updatedBy})); renderInventory(); }
+    if(inv&&inv.items){ inventory=inv.items.map(i=>({name:i.item,qty:i.quantity,updatedBy:i.updatedBy,lastUpdated:i.lastUpdated})); renderInventory(); }
     // Meal log
     if(ml&&ml.meals){ mealLog=ml.meals.map(m=>({dish:m.mealName,time:m.date,date:(m.date||'').slice(0,10),loggedBy:m.loggedBy,mealType:m.mealType})); renderMealLog(); }
     // Macros — Sheet is source of truth for member list
@@ -2129,6 +2224,34 @@ Use categories: Proteins, Vegetables, Fruits, Dairy & Bread, Grains & Carbs, Oil
   }
   function safeParseSets(s){ try{ return JSON.parse(s)||[]; }catch(e){ return []; } }
 
+  // ══════════ ACTIVITY NUDGE ══════════
+  // Shown after picking a user if neither inventory nor a meal has been touched in 1+ day —
+  // recommendations only stay accurate if these stay fresh.
+  function getLastActivityDate() {
+    let latest = null;
+    inventory.forEach(it => { const d = parseISTString(it.lastUpdated); if (d && (!latest || d>latest)) latest = d; });
+    mealLog.forEach(m => { const d = parseISTString(m.time); if (d && (!latest || d>latest)) latest = d; });
+    return latest;
+  }
+  function checkActivityNudge() {
+    const banner = document.getElementById('activity-nudge');
+    if (!banner) return;
+    if (sessionStorage.getItem('ntos_nudge_dismissed')) { banner.style.display='none'; return; }
+    const last = getLastActivityDate();
+    if (!last) { banner.style.display='none'; return; } // no data yet — don't nag on a brand new setup
+    const hoursSince = (Date.now() - last.getTime()) / 36e5;
+    if (hoursSince < 24) { banner.style.display='none'; return; }
+    const days = Math.floor(hoursSince/24);
+    document.getElementById('activity-nudge-text').textContent =
+      `No inventory or meal update in ${days===1?'a day':days+' days'} — quick check-in keeps recommendations accurate.`;
+    banner.style.display = 'block';
+  }
+  function dismissNudge() {
+    sessionStorage.setItem('ntos_nudge_dismissed','1');
+    const banner = document.getElementById('activity-nudge');
+    if (banner) banner.style.display='none';
+  }
+
   // ══════════ INIT ══════════
   function init(){
     const saved=localStorage.getItem('ntos_members_v2');
@@ -2141,7 +2264,7 @@ Use categories: Proteins, Vegetables, Fruits, Dairy & Bread, Grains & Carbs, Oil
     if(savedUser&&memberProfiles[savedUser]){
       currentUser=savedUser; currentPerson=Object.keys(memberProfiles).indexOf(savedUser); workoutViewMember=savedUser;
       loadPersonIntoUI();
-      syncAll().then(()=>loadDayProgress());
+      syncAll().then(()=>{ loadDayProgress(); checkActivityNudge(); });
     } else {
       // Fresh device — show modal immediately with loading state, populate after sync
       const modal = document.getElementById('user-modal');
