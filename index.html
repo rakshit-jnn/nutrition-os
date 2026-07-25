@@ -231,6 +231,74 @@
     .ai-box.empty { color: var(--text3); font-style: italic; }
     .ai-box.loading { color: var(--text2); }
 
+    /* Meal suggestions — collapsible dish list (no outer chrome, each dish is its own row) */
+    .ai-box.dish-list { border: none; padding: 0; background: transparent; min-height: 0; }
+    .dish-card {
+      border: 0.5px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      margin-bottom: 8px;
+      overflow: hidden;
+    }
+    .dish-card summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 13px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-weight: 600;
+      font-size: 14px;
+      line-height: 1.4;
+    }
+    .dish-card summary::-webkit-details-marker,
+    .dish-card summary::marker { display: none; content: ''; }
+    .dish-card .chevron {
+      flex-shrink: 0;
+      color: var(--text3);
+      font-size: 11px;
+      transition: transform 0.18s ease;
+    }
+    .dish-card[open] summary { border-bottom: 0.5px solid var(--border); background: var(--surface2); }
+    .dish-card[open] .chevron { transform: rotate(90deg); }
+    .dish-card-body { padding: 12px 14px 14px; font-size: 13px; }
+    .dish-list-hint { font-size: 11px; color: var(--text3); margin-top: 2px; padding: 0 2px; }
+
+    /* One-click meal logging */
+    .quick-log-hint { font-size: 11px; color: var(--text2); margin-bottom: 8px; }
+    .quick-log-list { display: flex; flex-direction: column; gap: 6px; }
+    .quick-log-btn {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      text-align: left;
+      padding: 10px 12px;
+      border-radius: var(--radius);
+      border: 0.5px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 500;
+      font-family: inherit;
+      cursor: pointer;
+      transition: background 0.15s ease, border-color 0.15s ease;
+    }
+    .quick-log-btn:hover:not(:disabled) { background: var(--surface2); border-color: var(--green-text); }
+    .quick-log-btn:disabled { opacity: 0.6; cursor: default; }
+    .ql-check {
+      flex-shrink: 0;
+      width: 20px; height: 20px;
+      border-radius: 50%;
+      background: var(--green-bg);
+      color: var(--green-text);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 700;
+    }
+    .ql-name { flex: 1; }
+    .quick-log-footnote { font-size: 11px; color: var(--text3); margin-top: 6px; padding: 0 2px; }
+
     .loading-dots::after {
       content: '';
       animation: dots 1.2s steps(4, end) infinite;
@@ -1299,15 +1367,15 @@ Keep each dish tight. No preamble, no closing notes.`;
     box.innerHTML = '<span class="loading-dots">Thinking</span>';
     try {
       const text = await callClaudeRaw(prompt, maxTokens);
-      box.className = 'ai-box';
       const dishes = parseDishBlocks(text);
-      if (!dishes.length) { box.innerHTML = renderClean(text); return text; }
+      if (!dishes.length) { box.className = 'ai-box'; box.innerHTML = renderClean(text); return text; }
+      box.className = 'ai-box dish-list';
       box.innerHTML = dishes.map(d => `
-        <details class="dish-card" style="margin-bottom:8px;border:0.5px solid var(--border);border-radius:var(--radius);padding:10px 12px;">
-          <summary style="cursor:pointer;font-weight:600;font-size:14px;">🍽️ ${d.rawName}</summary>
-          <div style="margin-top:8px;">${renderClean(d.body)}</div>
+        <details class="dish-card">
+          <summary><span class="dish-name">${d.rawName}</span><span class="chevron">▶</span></summary>
+          <div class="dish-card-body">${renderClean(d.body)}</div>
         </details>`).join('') +
-        `<div style="font-size:11px;color:var(--text3);margin-top:2px;">Tap a dish to see ingredients, steps &amp; portions.</div>`;
+        `<div class="dish-list-hint">Tap a dish to see ingredients, steps &amp; portions.</div>`;
       return text;
     } catch(e){ box.className='ai-box'; box.textContent='Error: '+e.message; return null; }
   }
@@ -1327,17 +1395,20 @@ Keep each dish tight. No preamble, no closing notes.`;
     window._quickLogEaters = eaters;
 
     wrap.style.display = 'block';
-    wrap.innerHTML = `<div style="font-size:11px;color:var(--text2);margin-bottom:6px;">One tap for ${eaters.join(', ')} — logs the meal and deducts inventory</div>` +
-      dishNames.map((d,i) => `<button class="btn btn-sm btn-primary" id="ql-btn-${i}" style="margin:0 6px 6px 0;" onclick="quickLogDish(${i})">✅ We ate: ${d}</button>`).join('') +
-      `<div style="font-size:11px;color:var(--text3);margin-top:2px;">Wrong people or portion? Use "Log a meal" below instead.</div>`;
+    wrap.innerHTML = `<div class="quick-log-hint">One tap for ${eaters.join(', ')} — logs the meal and deducts inventory</div>` +
+      `<div class="quick-log-list">` +
+      dishNames.map((d,i) => `<button class="quick-log-btn" id="ql-btn-${i}" onclick="quickLogDish(${i})"><span class="ql-check" id="ql-check-${i}">✓</span><span class="ql-name" id="ql-label-${i}">We ate: ${d}</span></button>`).join('') +
+      `</div>` +
+      `<div class="quick-log-footnote">Wrong people or portion? Use "Log a meal" below instead.</div>`;
   }
 
   async function quickLogDish(i) {
     const dish = (window._quickLogDishes||[])[i];
     const eaters = window._quickLogEaters||[];
     const btn = document.getElementById('ql-btn-'+i);
+    const label = document.getElementById('ql-label-'+i);
     if (!dish || !eaters.length) return;
-    if (btn) { btn.disabled = true; btn.textContent = 'Logging…'; }
+    if (btn) { btn.disabled = true; label.textContent = 'Logging…'; }
 
     const today=getISTToday(), now=getISTDatetime();
     for (const m of eaters) {
@@ -1346,7 +1417,7 @@ Keep each dish tight. No preamble, no closing notes.`;
     }
     renderMealLog();
     showToast('Logged "'+dish+'" for '+eaters.join(', ')+' ✓','success');
-    if (btn) { btn.textContent = '✓ Logged'; }
+    if (label) { label.textContent = 'Logged: '+dish; }
 
     await deductInventory(dish, '', eaters.length);
   }
