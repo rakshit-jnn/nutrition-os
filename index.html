@@ -665,12 +665,18 @@
         <button class="pill" onclick="selectPill(this,'duration')">5 days</button>
         <button class="pill" onclick="selectPill(this,'duration')">1 week</button>
       </div>
-      <textarea id="shop-note" class="unified-box" style="min-height:52px;margin-top:10px;" placeholder="Constraints (optional) — e.g. budget ₹2000, skip broccoli, add whey…"></textarea>
+
+      <div class="label" style="margin-top:14px;">Make sure to include</div>
+      <div style="font-size:11px;color:var(--text3);margin:-2px 0 8px;">Tap items you always want on the list — pulled from what you usually eat.</div>
+      <div class="quick-wrap" id="shop-quick"></div>
+
+      <textarea id="shop-note" class="unified-box" style="min-height:52px;margin-top:12px;" placeholder="Anything else? — e.g. budget ₹2000, skip broccoli, add cook's request…"></textarea>
       <button class="btn btn-primary btn-full" style="margin-top:10px;" onclick="getShoppingList()">Generate shopping list →</button>
     </div>
 
     <div id="shop-wrap" style="display:none;">
       <div class="label">Your list</div>
+      <div id="shop-basis" style="font-size:11px;color:var(--text3);margin-bottom:8px;"></div>
       <div id="shop-output"></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
         <button class="btn btn-sm" onclick="copyList()">Copy text</button>
@@ -1077,6 +1083,7 @@
     if (name==='meals') { renderPrevCookedHint(); renderMealQuick(); }
     if (name==='workouts') { renderWorkoutUI(); }
     if (name==='inventory') { renderInvQuick(); }
+    if (name==='shopping') { renderShopQuick(); }
   }
 
   // ══════════ INVENTORY: render grouped ══════════
@@ -1698,15 +1705,119 @@ Return this exact structure (fill in real values in Hindi where noted), one entr
 
   // ══════════ SHOPPING ══════════
   let lastShopText = '';
+  // ══════════ SHOPPING QUICK-ADD ("usual items") ══════════
+  // A tappable set of common grocery items so users can force-include what they
+  // always buy without typing. The list is personalised: staples the household's
+  // logged meals imply, then a curated common set, deduped.
+  const SHOP_STAPLES = ['Eggs','Paneer','Chicken breast','Milk','Curd','Tofu','Moong dal','Rajma','Chana','Bread','Oats','Atta','Rice','Onion','Tomato','Spinach','Broccoli','Banana','Olive oil','Whey protein','Peanut butter','Green vegetables'];
+  let shopMustInclude = [];
+  // Ingredient keywords implied by frequently-logged dishes → surfaced first.
+  function usualShopItems() {
+    const fromMeals = [];
+    const patt = buildEatingPatternSummary(21);
+    const KEYS = ['egg','paneer','chicken','dal','rajma','chana','tofu','oats','rice','roti','curd','milk','bhindi','aloo','soya','sabudana','poha','besan'];
+    const PRETTY = {egg:'Eggs',paneer:'Paneer',chicken:'Chicken breast',dal:'Moong dal',rajma:'Rajma',chana:'Chana',tofu:'Tofu',oats:'Oats',rice:'Rice',roti:'Atta',curd:'Curd',milk:'Milk',bhindi:'Bhindi',aloo:'Potato',soya:'Soya chunks',sabudana:'Sabudana',poha:'Poha',besan:'Besan'};
+    patt.dishes.forEach(d=>{
+      const low = d.toLowerCase();
+      KEYS.forEach(k=>{ if(low.includes(k) && !fromMeals.includes(PRETTY[k])) fromMeals.push(PRETTY[k]); });
+    });
+    return [...new Set([...fromMeals, ...SHOP_STAPLES])].slice(0,18);
+  }
+  function renderShopQuick() {
+    const el = document.getElementById('shop-quick');
+    if (!el) return;
+    el.innerHTML = usualShopItems().map(item=>{
+      const on = shopMustInclude.includes(item);
+      return `<button class="pill ${on?'selected':''}" onclick="toggleShopItem(this,'${item.replace(/'/g,"\\'")}')">${item}</button>`;
+    }).join('');
+  }
+  function toggleShopItem(btn, item) {
+    if (shopMustInclude.includes(item)) { shopMustInclude = shopMustInclude.filter(x=>x!==item); btn.classList.remove('selected'); }
+    else { shopMustInclude.push(item); btn.classList.add('selected'); }
+  }
+
+  // ══════════ HOUSEHOLD CONTEXT (shared signal builders) ══════════
+  // These turn raw logs/profiles into compact summaries for prompts. Keeping them
+  // separate is the seam where burn-rate prediction will later plug in: today
+  // buildEatingPatternSummary() reports frequency; later it can also report
+  // consumption rate per ingredient from the same mealLog data.
+
+  // Frequency-weighted view of what the household actually eats, from recent meal logs.
+  // windowDays limits how far back we look so patterns stay current.
+  function buildEatingPatternSummary(windowDays) {
+    windowDays = windowDays || 21;
+    if (!mealLog.length) return { text: 'No meals logged yet — no eating history to learn from.', dishes: [] };
+    const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - windowDays);
+    const counts = {};
+    mealLog.forEach(m => {
+      if (!m.dish) return;
+      const d = parseISTString(m.time) || parseISTString(m.date);
+      if (d && d < cutoff) return; // outside window
+      const key = m.dish.trim();
+      counts[key] = (counts[key] || 0) + 1;
+    });
+    const ranked = Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,12);
+    if (!ranked.length) return { text: 'No meals logged in the last '+windowDays+' days.', dishes: [] };
+    const text = ranked.map(([dish,n]) => `${dish} (${n}x)`).join(', ');
+    // burn-rate hook (future): compute per-ingredient consumption here from the same window
+    return { text, dishes: ranked.map(r=>r[0]), windowDays };
+  }
+
+  // All members' targets, not just the first person's.
+  function buildMacroTargetsSummary() {
+    if (!personMacros.length) return 'No macro targets set.';
+    return personMacros.map(p =>
+      `${p.person}: ${p.cal||'?'} kcal, ${p.protein||'?'}g protein, ${p.carbs||'?'}g carbs, ${p.fat||'?'}g fat`
+    ).join(' | ');
+  }
+
+  // Diet constraints across the household — the union of what to respect.
+  function buildDietSummary() {
+    return Object.keys(memberProfiles).map(name => {
+      const p = memberProfiles[name];
+      return `${name}: ${p.diet||'not set'}${p.dislikes?', avoids '+p.dislikes:''}${p.allergies&&p.allergies!=='None'?', allergic to '+p.allergies:''}`;
+    }).join(' | ');
+  }
+
   async function getShoppingList() {
     const dur = getSelected('duration-pills') || '3 days';
     const note = document.getElementById('shop-note').value;
     document.getElementById('shop-wrap').style.display='block';
-    const m = personMacros[0]||{protein:150,cal:1900};
-    const prompt = `Grocery planner for 3 men in Gurugram doing body recomposition (veg + eggs + occasional chicken). Target ~${m.protein}g protein, ~${m.cal} kcal/day each. Already have: ${getInventoryText()}. Generate a shopping list for ${dur} for 3 people for Blinkit/Zepto. Constraints: ${note||'none'}. Skip items already in stock unless low.
+
+    const memberCount = Object.keys(memberProfiles).length || 3;
+    const eating = buildEatingPatternSummary(21);
+    const macros = buildMacroTargetsSummary();
+    const diets  = buildDietSummary();
+    const mustLine = shopMustInclude.length
+      ? `\n\nALWAYS INCLUDE these items the household specifically wants (add them even if some stock exists, topping up to a sensible quantity for the period): ${shopMustInclude.join(', ')}.`
+      : '';
+
+    const prompt = `You are a grocery planner for a ${memberCount}-person household in Gurugram doing body recomposition (gym 3-4x/week). Plan a shopping list for ${dur} for ${memberCount} people, for Blinkit/Zepto.
+
+HOUSEHOLD (respect every member's diet and allergies):
+${diets}
+
+DAILY MACRO TARGETS PER PERSON:
+${macros}
+
+WHAT THIS HOUSEHOLD ACTUALLY EATS (most-logged dishes, last ${eating.windowDays||21} days — buy ingredients that keep these dishes possible; weight quantities toward the more frequent ones):
+${eating.text}
+
+ALREADY IN KITCHEN (skip these unless the quantity looks low for the period):
+${getInventoryText()}${mustLine}
+
+Extra constraints: ${note||'none'}.
+
+Build the list so the household can keep cooking their frequent dishes AND hit their protein targets. Prioritise protein sources. Use realistic Blinkit pack sizes.
 Output ONLY a markdown table with exactly these columns: | Category | Item | Quantity |
-Use categories: Proteins, Vegetables, Fruits, Dairy & Bread, Grains & Carbs, Oils & Condiments, Spices, Supplements. Realistic Blinkit pack sizes. No preamble, no notes after the table.`;
+Use categories: Proteins, Vegetables, Fruits, Dairy & Bread, Grains & Carbs, Beverages, Oils & Condiments, Spices, Supplements. No preamble, no notes after the table.`;
     const box = document.getElementById('shop-output');
+    const basis = document.getElementById('shop-basis');
+    if (basis) {
+      basis.textContent = eating.dishes.length
+        ? `Based on your last ${eating.windowDays}-day eating pattern (${eating.dishes.length} recurring dishes), everyone's macro targets & current inventory.`
+        : `Based on macro targets & inventory. Log a few meals to make this learn what you actually eat.`;
+    }
     box.className='ai-box loading'; box.innerHTML='<span class="loading-dots">Thinking</span>';
     try {
       lastShopText = await callClaudeRaw(prompt, 1200);
