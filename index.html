@@ -232,38 +232,48 @@
     .ai-box.loading { color: var(--text2); }
 
     /* Meal suggestions — collapsible dish list (no outer chrome, each dish is its own row) */
-    .ai-box.dish-list { border: none; padding: 0; background: transparent; min-height: 0; }
+    .ai-box.dish-list { border: none; padding: 0; background: transparent; min-height: 0; white-space: normal; }
     .dish-card {
       border: 0.5px solid var(--border);
       border-radius: var(--radius);
       background: var(--surface);
-      margin-bottom: 8px;
+      margin-bottom: 6px;
       overflow: hidden;
     }
     .dish-card summary {
       list-style: none;
       cursor: pointer;
-      padding: 13px 14px;
+      padding: 12px 14px;
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      gap: 10px;
+      gap: 12px;
       font-weight: 600;
       font-size: 14px;
-      line-height: 1.4;
+      line-height: 1.35;
     }
     .dish-card summary::-webkit-details-marker,
     .dish-card summary::marker { display: none; content: ''; }
+    .dish-letter {
+      flex-shrink: 0;
+      width: 22px; height: 22px;
+      border-radius: 6px;
+      background: var(--surface2);
+      color: var(--text2);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 700;
+    }
+    .dish-name { flex: 1; }
     .dish-card .chevron {
       flex-shrink: 0;
       color: var(--text3);
-      font-size: 11px;
+      font-size: 10px;
       transition: transform 0.18s ease;
     }
-    .dish-card[open] summary { border-bottom: 0.5px solid var(--border); background: var(--surface2); }
+    .dish-card[open] summary { border-bottom: 0.5px solid var(--border); }
+    .dish-card[open] .dish-letter { background: var(--accent); color: var(--bg); }
     .dish-card[open] .chevron { transform: rotate(90deg); }
-    .dish-card-body { padding: 12px 14px 14px; font-size: 13px; }
-    .dish-list-hint { font-size: 11px; color: var(--text3); margin-top: 2px; padding: 0 2px; }
+    .dish-card-body { padding: 10px 14px 12px 48px; font-size: 13px; }
+    .dish-list-hint { font-size: 11px; color: var(--text3); margin-top: 8px; padding: 0 2px; }
 
     /* One-click meal logging */
     .quick-log-hint { font-size: 11px; color: var(--text2); margin-bottom: 8px; }
@@ -271,7 +281,7 @@
     .quick-log-btn {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 12px;
       width: 100%;
       text-align: left;
       padding: 10px 12px;
@@ -286,17 +296,30 @@
       transition: background 0.15s ease, border-color 0.15s ease;
     }
     .quick-log-btn:hover:not(:disabled) { background: var(--surface2); border-color: var(--green-text); }
-    .quick-log-btn:disabled { opacity: 0.6; cursor: default; }
-    .ql-check {
+    .quick-log-btn:disabled { opacity: 0.7; cursor: default; }
+    .quick-log-btn.logged { border-color: var(--green-text); background: var(--green-bg); }
+    .ql-letter {
       flex-shrink: 0;
-      width: 20px; height: 20px;
-      border-radius: 50%;
-      background: var(--green-bg);
-      color: var(--green-text);
+      width: 22px; height: 22px;
+      border-radius: 6px;
+      background: var(--surface2);
+      color: var(--text2);
       display: flex; align-items: center; justify-content: center;
       font-size: 12px; font-weight: 700;
     }
     .ql-name { flex: 1; }
+    .ql-check {
+      flex-shrink: 0;
+      width: 20px; height: 20px;
+      border-radius: 50%;
+      background: var(--green-text);
+      color: var(--bg);
+      display: none;
+      align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 700;
+    }
+    .quick-log-btn.logged .ql-check { display: flex; }
+    .quick-log-btn.logged .ql-letter { background: var(--green-text); color: var(--bg); }
     .quick-log-footnote { font-size: 11px; color: var(--text3); margin-top: 6px; padding: 0 2px; }
 
     .loading-dots::after {
@@ -1370,11 +1393,8 @@ Keep each dish tight. No preamble, no closing notes.`;
       const dishes = parseDishBlocks(text);
       if (!dishes.length) { box.className = 'ai-box'; box.innerHTML = renderClean(text); return text; }
       box.className = 'ai-box dish-list';
-      box.innerHTML = dishes.map(d => `
-        <details class="dish-card">
-          <summary><span class="dish-name">${d.rawName}</span><span class="chevron">▶</span></summary>
-          <div class="dish-card-body">${renderClean(d.body)}</div>
-        </details>`).join('') +
+      const letters = 'ABCDEFGHIJ';
+      box.innerHTML = dishes.map((d,i) => `<details class="dish-card"><summary><span class="dish-letter">${letters[i]||'•'}</span><span class="dish-name">${d.rawName}</span><span class="chevron">▶</span></summary><div class="dish-card-body">${renderClean(d.body)}</div></details>`).join('') +
         `<div class="dish-list-hint">Tap a dish to see ingredients, steps &amp; portions.</div>`;
       return text;
     } catch(e){ box.className='ai-box'; box.textContent='Error: '+e.message; return null; }
@@ -1394,10 +1414,11 @@ Keep each dish tight. No preamble, no closing notes.`;
     window._quickLogDishes = dishNames;
     window._quickLogEaters = eaters;
 
+    const letters = 'ABCDEFGHIJ';
     wrap.style.display = 'block';
     wrap.innerHTML = `<div class="quick-log-hint">One tap for ${eaters.join(', ')} — logs the meal and deducts inventory</div>` +
       `<div class="quick-log-list">` +
-      dishNames.map((d,i) => `<button class="quick-log-btn" id="ql-btn-${i}" onclick="quickLogDish(${i})"><span class="ql-check" id="ql-check-${i}">✓</span><span class="ql-name" id="ql-label-${i}">We ate: ${d}</span></button>`).join('') +
+      dishNames.map((d,i) => `<button class="quick-log-btn" id="ql-btn-${i}" onclick="quickLogDish(${i})"><span class="ql-letter">${letters[i]||'•'}</span><span class="ql-name" id="ql-label-${i}">We ate: ${d}</span><span class="ql-check" id="ql-check-${i}">✓</span></button>`).join('') +
       `</div>` +
       `<div class="quick-log-footnote">Wrong people or portion? Use "Log a meal" below instead.</div>`;
   }
@@ -1418,6 +1439,7 @@ Keep each dish tight. No preamble, no closing notes.`;
     renderMealLog();
     showToast('Logged "'+dish+'" for '+eaters.join(', ')+' ✓','success');
     if (label) { label.textContent = 'Logged: '+dish; }
+    if (btn) { btn.classList.add('logged'); }
 
     await deductInventory(dish, '', eaters.length);
   }
