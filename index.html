@@ -991,11 +991,17 @@
 
   // ══════════ SHEET API ══════════
   async function sheetGet(action) {
-    try { const r = await fetch(SHEET_URL + '?action=' + action); return await r.json(); }
+    try {
+      // cache:'no-store' + a unique _ts param: some browsers (esp. iOS Safari)
+      // will silently serve a cached response for an identical GET URL otherwise,
+      // which is why manual reloads sometimes didn't show another device's changes.
+      const r = await fetch(SHEET_URL + '?action=' + action + '&_ts=' + Date.now(), { cache: 'no-store' });
+      return await r.json();
+    }
     catch(e){ console.error('Sheet GET', e); return null; }
   }
   async function sheetPost(body) {
-    try { const r = await fetch(SHEET_URL, { method:'POST', body: JSON.stringify(body) }); return await r.json(); }
+    try { const r = await fetch(SHEET_URL, { method:'POST', body: JSON.stringify(body), cache: 'no-store' }); return await r.json(); }
     catch(e){ console.error('Sheet POST', e); return null; }
   }
 
@@ -2383,8 +2389,12 @@ Use categories: Proteins, Vegetables, Fruits, Dairy & Bread, Grains & Carbs, Bev
   }
 
   // ══════════ SYNC ══════════
-  async function syncAll(){
-    showToast('Syncing…','info');
+  let _syncInFlight = false;
+  async function syncAll(silent){
+    if(_syncInFlight) return; // avoid overlapping polls if one is already running
+    _syncInFlight = true;
+    if(!silent) showToast('Syncing…','info');
+    try{
     // Fire all Sheet requests in parallel — ~5x faster than sequential awaits
     const [inv, ml, mac, prefs, wk] = await Promise.all([
       sheetGet('getInventory'),
@@ -2424,9 +2434,22 @@ Use categories: Proteins, Vegetables, Fruits, Dairy & Bread, Grains & Carbs, Bev
     }
     // Workouts
     if(wk&&wk.workouts){ workoutLog=wk.workouts.map(w=>({date:(w.date||'').slice(0,10),loggedBy:w.person,exercise:w.exercise,muscleGroup:w.muscleGroup,sets:safeParseSets(w.sets),totalVolume:w.totalVolume,caloriesBurned:w.caloriesBurned})); renderWorkoutUI(); }
-    showToast('Synced ✓','success');
+    if(!silent) showToast('Synced ✓','success');
+    } finally { _syncInFlight = false; }
   }
   function safeParseSets(s){ try{ return JSON.parse(s)||[]; }catch(e){ return []; } }
+
+  // ══════════ BACKGROUND POLLING ══════════
+  // Keeps devices near-live without the user needing to manually reload.
+  // Silent (no toast spam), paused while the tab is hidden to save Apps Script quota,
+  // and re-syncs immediately whenever the tab becomes visible again.
+  const SYNC_POLL_MS = 30000;
+  let _syncPollTimer = null;
+  function startSyncPolling(){
+    if(_syncPollTimer) return;
+    _syncPollTimer = setInterval(()=>{ if(document.visibilityState==='visible') syncAll(true); }, SYNC_POLL_MS);
+    document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') syncAll(true); });
+  }
 
   // ══════════ ACTIVITY NUDGE ══════════
   // Shown after picking a user if neither inventory nor a meal has been touched in 1+ day —
@@ -2480,6 +2503,7 @@ Use categories: Proteins, Vegetables, Fruits, Dairy & Bread, Grains & Carbs, Bev
         loadPersonIntoUI();
       });
     }
+    startSyncPolling();
   }
   init();
 </script>
