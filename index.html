@@ -2291,7 +2291,7 @@ Use categories: Proteins, Vegetables, Fruits, Dairy & Bread, Grains & Carbs, Bev
     document.getElementById('add-member-form').style.display='none';
     showToast(name+' added ✓','success');
   }
-  function removeMember(name){
+  async function removeMember(name){
     if(!confirm('Remove '+name+'?')) return;
     delete memberProfiles[name];
     saveProfilesLocal(); rebuildPersonMacros();
@@ -2301,7 +2301,11 @@ Use categories: Proteins, Vegetables, Fruits, Dairy & Bread, Grains & Carbs, Bev
     if(workoutViewMember===name) workoutViewMember=currentUser;
     renderMembersList(); renderProfilePersonToggle(); renderMemberPills(); renderWorkoutMemberToggle(); renderUserModalButtons();
     loadPersonIntoUI();
-    showToast(name+' removed','success');
+    // Must persist to the Sheet — Macros/Preferences rows are the source of truth
+    // syncAll() checks, so without this the member reappears on the next sync.
+    const r = await sheetPost({action:'removeMember', person:name});
+    if(r && r.success) showToast(name+' removed','success');
+    else showToast(name+' removed locally, but sync failed — retry when online or it may reappear','error');
   }
 
   function saveProfilesLocal(){ localStorage.setItem('ntos_members_v2', JSON.stringify(memberProfiles)); }
