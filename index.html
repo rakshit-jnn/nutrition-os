@@ -387,7 +387,7 @@
   const VISION_API = '/api/vision';
   const MODEL      = 'claude-sonnet-4-5';
   const SHEET_URL  = 'https://script.google.com/macros/s/AKfycbxXDdY5y_QUVIML1Zb4nwTnuryI_Uqhe-EGwc_iDT_s5OZ9wJNcfWvILo4rCC5bN6XT/exec';
-  const VERSION    = 'v2.0';
+  const VERSION    = 'v2.1';
   const POLL_MS    = 30000;
 
   // ══════════ STATE ══════════
@@ -918,19 +918,24 @@
   function renderMacroCard(t, got){
     const box = document.getElementById('t-macros');
     if (!box) return;
+    const fibTarget = t.fiber || BLANK.fiber;
     const missing = got.fibTotal - got.fibKnown;
-    const fibNote = !got.count ? '—'
-      : got.fibKnown === 0 ? '— not estimated yet'
-      : missing ? null : null;
-    const fibRow = fibNote
+    // Three distinct states, and the row keeps the same shape in all of them so it
+    // never looks like fibre is broken or absent:
+    //   nothing logged   → 0 / target, exactly like every other macro
+    //   logged, no data  → — / target, because the target IS known, only intake isn't
+    //   some data        → a normal row, with a footnote naming what's still missing
+    const fibRow = !got.count
+      ? macroRow('Fibre', 0, fibTarget, 'var(--dhania)')
+      : got.fibKnown === 0
       ? `<div class="macro-row">
            <div class="macro-head">
              <span style="font-size:12px;color:var(--text2);">Fibre</span>
-             <span class="mono" style="font-size:12px;color:var(--text3);">${fibNote}</span>
+             <span class="mono" style="font-size:12px;color:var(--text3);">— / ${fibTarget} g</span>
            </div>
            <div class="macro-track"></div>
          </div>`
-      : macroRow('Fibre', got.fib, t.fiber || BLANK.fiber, 'var(--dhania)');
+      : macroRow('Fibre', got.fib, fibTarget, 'var(--dhania)');
 
     box.innerHTML = `
       <div class="row" style="align-items:baseline;">
@@ -946,8 +951,10 @@
         ${macroRow('Fat', got.f, t.fat, 'var(--mirch)')}
         ${fibRow}
       </div>
-      ${missing && got.fibKnown ? `<div class="tiny" style="margin-top:10px;">
-        Fibre missing for ${missing} of today's ${got.fibTotal} dishes — it fills in as they're re-estimated.</div>` : ''}`;
+      ${got.count && missing ? `<div class="tiny" style="margin-top:10px;">
+        ${got.fibKnown ? `Fibre missing for ${missing} of today's ${got.fibTotal} dishes`
+                       : `No fibre estimate yet for ${missing === 1 ? "today's dish" : `today's ${missing} dishes`}`}
+        — tap a dish in You → Dish database to fill it in, or it arrives when the dish is next estimated.</div>` : ''}`;
   }
 
   // Logging is the thing you do least often, so it stays folded away until asked for.
@@ -1072,22 +1079,33 @@
   let estimating = {};
   async function estimateMacros(dish){
     const key = dish.trim().toLowerCase();
-    if (dishMacros[key]) return dishMacros[key];
+    const have = dishMacros[key];
+    // Fibre arrived after most of this database was built, so a dish can be
+    // "known" and still have no fibre figure. Re-estimate exactly those, and only
+    // when the dish is actually eaten — no bulk backfill, no cost for dishes
+    // nobody orders, and a hand-confirmed row is never second-guessed.
+    const needsFibre = have && have.fib == null && have.source !== 'confirmed';
+    if (have && !needsFibre) return have;
     if (estimating[key]) return estimating[key];
     estimating[key] = (async () => {
       try {
         const r = await askJSON(
           `Estimate macros for one typical Indian home serving of "${dish}". ` +
           `Keys: kcal, p, c, f, fib — protein, carbs, fat and dietary fibre in grams, integers.`, 200);
-        const entry = { kcal:+r.kcal||0, p:+r.p||0, c:+r.c||0, f:+r.f||0,
-                        fib:(r.fib==null?null:+r.fib||0), source:'estimated' };
+        // A re-estimate is only here to supply the missing fibre, so the existing
+        // macros win — otherwise eating an old dish would silently rewrite numbers
+        // that were already right.
+        const entry = have
+          ? Object.assign({}, have, { fib:(r.fib==null?null:+r.fib||0) })
+          : { kcal:+r.kcal||0, p:+r.p||0, c:+r.c||0, f:+r.f||0,
+              fib:(r.fib==null?null:+r.fib||0), source:'estimated' };
         dishMacros[key] = entry;
         renderToday();
         // Persist to the shared DB (fire-and-forget; a failed write just means
         // it'll be re-estimated next time, never a crash).
         sheetPost({ action:'saveDishLibrary', dish:dish.trim(), kcal:entry.kcal,
           protein:entry.p, carbs:entry.c, fat:entry.f, fiber:entry.fib,
-          source:'estimated', updatedBy:activePerson });
+          source:entry.source || 'estimated', updatedBy:activePerson });
         return entry;
       } catch(e){ return null; }
       finally { delete estimating[key]; }
@@ -2254,7 +2272,7 @@
 
     document.getElementById('y-targets').innerHTML = [
       ['Calories', p.cal, 'kcal'], ['Protein', p.protein, 'g'],
-      ['Carbs', p.carbs, 'g'], ['Fat', p.fat, 'g']
+      ['Carbs', p.carbs, 'g'], ['Fat', p.fat, 'g'], ['Fibre', p.fiber || BLANK.fiber, 'g']
     ].map(([l,v,u])=>`<div class="row"><span class="muted">${l}</span>
         <span class="mono">${v} ${u}</span></div>`).join('');
 
