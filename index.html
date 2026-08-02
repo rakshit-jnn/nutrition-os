@@ -6,6 +6,9 @@
 <meta name="theme-color" content="#16130F" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#F5F3ED" media="(prefers-color-scheme: light)">
 <title>Nutrition OS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Devanagari:wght@400;500;600&display=swap">
 <style>
   :root {
     --bg:#F5F3ED; --surface:#FFFFFF; --surface2:#EFEDE6; --border:#E4E0D6; --border2:#D4CFC2;
@@ -13,7 +16,15 @@
     --haldi:#B8791A; --dhania:#5C7F2E; --mirch:#A83E27;
     --haldi-bg:#FAF0DC; --dhania-bg:#EDF3E2; --mirch-bg:#FBEAE5;
     --on-accent:#F5F3ED; --accent-solid:#1C1814;
-    --mono: ui-monospace, "SF Mono", "Roboto Mono", Menlo, monospace;
+    /* Three roles. Bricolage Grotesque is the voice — a variable grotesque with
+       slightly irregular proportions, warm rather than corporate, used only for
+       headlines, dish names and the calorie figure. IBM Plex carries everything
+       else, chosen specifically because IBM Plex Sans Devanagari is a pixel-exact
+       sibling: the cook-facing Hindi screens stop falling back to whatever font
+       the phone happens to have and join the same family. */
+    --display: "Bricolage Grotesque", -apple-system, BlinkMacSystemFont, sans-serif;
+    --sans: "IBM Plex Sans", "IBM Plex Sans Devanagari", -apple-system, BlinkMacSystemFont, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -28,7 +39,7 @@
   html,body { margin:0; padding:0; }
   body {
     background:var(--bg); color:var(--text);
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    font-family:var(--sans);
     font-size:15px; line-height:1.5;
     padding-bottom:calc(72px + env(safe-area-inset-bottom));
     overscroll-behavior-y:none;
@@ -41,8 +52,10 @@
 
   .pad { padding:0 18px; }
   .mono { font-family:var(--mono); font-variant-numeric:tabular-nums; }
-  h1 { font-size:20px; font-weight:600; margin:0; line-height:1.35; letter-spacing:-0.01em; }
+  h1 { font-family:var(--display); font-size:21px; font-weight:600; margin:0;
+       line-height:1.25; letter-spacing:-0.02em; }
   h2 { font-size:15px; font-weight:600; margin:0; }
+  .display { font-family:var(--display); letter-spacing:-0.02em; }
   .eyebrow { font-size:11px; color:var(--text2); letter-spacing:0.06em; text-transform:uppercase; }
   .muted { color:var(--text2); font-size:13px; }
   .tiny { font-size:11px; color:var(--text3); }
@@ -81,9 +94,10 @@
   .chip.on { border-color:var(--haldi); color:var(--haldi); }
   .chips { display:flex; flex-wrap:wrap; gap:8px; }
 
-  .daybar { display:flex; height:8px; border-radius:3px; overflow:hidden; background:var(--surface2); }
-  .daybar > div { transition:width .5s ease; }
-  .legend { display:flex; justify-content:space-between; margin-top:9px; font-size:11px; color:var(--text2); }
+  .macro-row + .macro-row { margin-top:11px; }
+  .macro-head { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:5px; }
+  .macro-track { height:5px; border-radius:3px; background:var(--surface2); overflow:hidden; }
+  .macro-fill { height:100%; transition:width .5s ease; }
 
   nav {
     position:fixed; bottom:0; left:0; right:0; display:flex;
@@ -160,40 +174,29 @@
     </div>
 
     <div class="pad" style="margin-top:16px;">
-      <div class="daybar" id="t-daybar"><div style="width:0"></div></div>
-      <div class="legend mono" id="t-legend"></div>
+      <div class="card" id="t-macros"></div>
     </div>
 
-    <div class="pad" style="margin-top:18px;display:none;" id="t-prep-wrap">
-      <div class="card" id="t-prep"></div>
-    </div>
-
-    <div class="pad" style="margin-top:18px;">
+    <div class="pad" style="margin-top:12px;">
       <div class="card" id="t-cook">
         <div class="eyebrow" style="color:var(--haldi);">Cook next</div>
         <div style="margin-top:10px;" class="muted">Working out what to suggest<span class="dots"></span></div>
       </div>
     </div>
 
-    <div class="pad" style="margin-top:18px;">
-      <div class="row" style="margin-bottom:10px;">
-        <h2>Log a meal</h2>
-        <button class="btn-ghost" style="padding:4px 8px;min-height:0;font-size:13px;" onclick="openLogSheet()">More</button>
-      </div>
-      <div class="chips" id="t-quick"></div>
-    </div>
-
-    <div class="pad" style="margin-top:18px;">
-      <div class="card" onclick="go('kitchen')" style="cursor:pointer;">
-        <div class="row">
-          <h2>Kitchen</h2>
-          <span class="mono" style="font-size:12px;color:var(--mirch);" id="t-lowcount"></span>
+    <div class="pad" style="margin-top:12px;">
+      <div class="card">
+        <div class="row" onclick="toggleLogging()" style="cursor:pointer;">
+          <h2>Log a meal</h2>
+          <span class="tiny" id="t-log-caret" style="font-size:15px;color:var(--text3);">⌄</span>
         </div>
-        <div class="mono" style="font-size:12px;line-height:2;margin-top:8px;" id="t-lowlist"></div>
+        <div id="t-log-body" style="display:none;margin-top:12px;">
+          <div class="chips" id="t-quick"></div>
+        </div>
       </div>
     </div>
 
-    <div class="pad" style="margin-top:18px;">
+    <div class="pad" style="margin-top:12px;">
       <div class="card">
         <div class="eyebrow">Eaten today</div>
         <div style="margin-top:10px;" id="t-eaten"></div>
@@ -230,8 +233,16 @@
     </div>
 
     <div class="pad" style="margin-top:18px;">
-      <h2 style="margin-bottom:10px;">In stock</h2>
-      <div id="k-list"></div>
+      <div class="card">
+        <div class="row" onclick="toggleStock()" style="cursor:pointer;">
+          <h2>In stock</h2>
+          <span style="display:flex;align-items:center;gap:9px;">
+            <span class="mono" style="font-size:12px;color:var(--text3);" id="k-count"></span>
+            <span id="k-caret" style="font-size:15px;color:var(--text3);">⌄</span>
+          </span>
+        </div>
+        <div id="k-list" style="display:none;"></div>
+      </div>
     </div>
   </section>
 
@@ -517,17 +528,35 @@
     syncing = true;
     if (!silent) setSyncLabel('syncing…');
     try {
-      const [inv, ml, mac, prefs, wk, dm] = await Promise.all([
+      const [inv, ml, mac, prefs, wk, lib, skl] = await Promise.all([
         sheetGet('getInventory'), sheetGet('getMealLog'), sheetGet('getMacros'),
-        sheetGet('getPreferences'), sheetGet('getWorkoutLog'), sheetGet('getDishMacros')
+        sheetGet('getPreferences'), sheetGet('getWorkoutLog'),
+        sheetGet('getDishLibrary'), sheetGet('getCookSkills')
       ]);
 
-      if (dm && dm.dishes)
-        dm.dishes.forEach(x=>{
-          dishMacros[String(x.dish).trim().toLowerCase()] =
-            { kcal:+x.kcal||0, p:+x.protein||0, c:+x.carbs||0, f:+x.fat||0,
-              source:x.source||'estimated', rating:x.cookRating||'', ratingCount:+x.ratingCount||0,
-              knows:x.cookKnows||'' };
+      // Two sources, one in-memory shape. Nutrition comes from the shared library
+      // (identical for every household); what the cook can make and how well comes
+      // from this household's own sheet. Everything downstream still reads a single
+      // dishMacros{} object, so the split changed where data lives, not how it's used.
+      if (lib && lib.dishes)
+        lib.dishes.forEach(x=>{
+          const k = String(x.dish).trim().toLowerCase();
+          const cur = dishMacros[k] || {};
+          dishMacros[k] = Object.assign(cur, {
+            kcal:+x.kcal||0, p:+x.protein||0, c:+x.carbs||0, f:+x.fat||0,
+            fib:(x.fiber==null?null:+x.fiber), source:x.source||'estimated',
+            common:(x.common==null?null:!!x.common),
+            prepNote:x.prepNote||'', prepHours:+x.prepHours||0
+          });
+        });
+
+      if (skl && skl.skills)
+        skl.skills.forEach(x=>{
+          const k = String(x.dish).trim().toLowerCase();
+          const cur = dishMacros[k] || { kcal:0,p:0,c:0,f:0,fib:null,source:'estimated' };
+          dishMacros[k] = Object.assign(cur, {
+            rating:x.cookRating||'', ratingCount:+x.ratingCount||0, knows:x.cookKnows||''
+          });
         });
 
       if (inv && inv.items)
@@ -642,12 +671,19 @@
   let dishMacros = {};
   function estimateDay(){
     const meals = eatenToday();
-    let p=0,c=0,f=0,kcal=0;
+    let p=0,c=0,f=0,kcal=0,fib=0,fibKnown=0,fibTotal=0;
     meals.forEach(m=>{
       const e = dishMacros[m.dish.toLowerCase()];
-      if (e){ p+=e.p; c+=e.c; f+=e.f; kcal+=e.kcal; }
+      if (!e) return;
+      p+=e.p; c+=e.c; f+=e.f; kcal+=e.kcal;
+      fibTotal++;
+      // Fibre arrived later than the other macros, so older rows genuinely don't
+      // have it. Counting a blank as 0 would quietly under-report all day —
+      // better to say how many dishes are missing it than to invent a number.
+      if (e.fib != null){ fib += e.fib; fibKnown++; }
     });
-    return { p:Math.round(p), c:Math.round(c), f:Math.round(f), kcal:Math.round(kcal), count:meals.length };
+    return { p:Math.round(p), c:Math.round(c), f:Math.round(f), kcal:Math.round(kcal),
+             fib:Math.round(fib), fibKnown, fibTotal, count:meals.length };
   }
 
   // ══════════ COOK REPERTOIRE ══════════
@@ -716,6 +752,10 @@
   function prepFor(m){
     const name = typeof m === 'string' ? m : (m && m.dish) || '';
     for (const h of PREP_HINTS) if (h.re.test(name)) return { note:h.note, hours:h.hours };
+    // Then the shared library, which grows as households across the app hit
+    // dishes the static table never covered.
+    const lib = dishMacros[String(name).trim().toLowerCase()];
+    if (lib && lib.prepNote) return { note:lib.prepNote, hours:+lib.prepHours || 0 };
     if (m && typeof m === 'object' && m.prep && String(m.prep).trim())
       return { note:String(m.prep).trim(), hours:+m.prepHours || 0 };
     return null;
@@ -734,19 +774,7 @@
     document.getElementById('t-date').textContent = prettyDate();
     const t = me(), got = estimateDay();
 
-    const pctP = Math.min(100, Math.round(got.p/(t.protein||1)*100));
-    const pctC = Math.min(100, Math.round(got.c/(t.carbs||1)*100));
-    const pctF = Math.min(100, Math.round(got.f/(t.fat||1)*100));
-
-    document.getElementById('t-daybar').innerHTML =
-      `<div style="width:${Math.round(pctP*0.4)}%;background:var(--dhania)"></div>` +
-      `<div style="width:${Math.round(pctC*0.35)}%;background:var(--haldi)"></div>` +
-      `<div style="width:${Math.round(pctF*0.25)}%;background:var(--mirch)"></div>`;
-
-    document.getElementById('t-legend').innerHTML =
-      `<span style="color:var(--dhania)">${got.p}/${t.protein} p</span>` +
-      `<span style="color:var(--haldi)">${got.c}/${t.carbs} c</span>` +
-      `<span style="color:var(--mirch)">${got.f}/${t.fat} f</span>`;
+    renderMacroCard(t, got);
 
     // Headline states what's true right now and what to do about it.
     const gapP = t.protein - got.p;
@@ -758,8 +786,6 @@
     document.getElementById('t-headline').textContent = head;
 
     renderQuickChips();
-    renderPrepCard();
-    renderKitchenPulse();
     renderEaten();
   }
 
@@ -791,37 +817,44 @@
     return out.slice(0, 2);
   }
 
-  function renderPrepCard(){
-    const wrap = document.getElementById('t-prep-wrap');
-    const box  = document.getElementById('t-prep');
-    if (!wrap || !box) return;
+  // A prep strip rather than a card of its own. Two things can be urgent: a dish
+  // on tonight's menu whose soak deadline has passed, or a dish worth soaking now
+  // for tomorrow. Both are deadlines about the same card, so they belong on it.
+  function prepStrip(){
     const h = new Date().getHours();
     const items = prepCandidates();
-    // Evening only, once a night, and only if there's actually something to soak.
-    const show = h >= 18 && h <= 23 && items.length && settings.prepDismissed !== today();
-    wrap.style.display = show ? '' : 'none';
-    if (!show) return;
-
-    box.innerHTML = `
-      <div class="row">
-        <div class="eyebrow" style="color:var(--haldi);">Before bed</div>
-        <button class="btn-ghost" style="padding:2px 8px;min-height:0;font-size:12px;"
-          onclick="dismissPrep()">Not tomorrow</button>
-      </div>
-      <div style="font-size:15px;line-height:1.6;margin-top:8px;">
-        Want ${esc(items.map(i=>i.name).join(' or '))} tomorrow? It has to start tonight.
-      </div>
-      <div style="margin-top:10px;">
-        ${items.map(i=>`<div class="tiny mono" style="line-height:2;">⏳ ${esc(i.note)}${i.hours?` · ${i.hours} h`:''}</div>`).join('')}
-      </div>
-      <button class="btn-primary" style="width:100%;margin-top:12px;"
-        onclick='tellCookPrep(${JSON.stringify(items.map(i=>i.name))})'>Tell the cook now</button>`;
+    const evening = h >= 18 && h <= 23 && items.length && settings.prepDismissed !== today();
+    if (evening){
+      return `<div style="margin-top:11px;border-left:2px solid var(--haldi);background:var(--haldi-bg);
+                padding:9px 11px;">
+        <div class="row" style="align-items:flex-start;">
+          <div style="font-size:12px;color:var(--haldi);line-height:1.5;">
+            Want ${esc(items.map(i=>i.name).join(' or '))} tomorrow? ${esc(items[0].note)} tonight.
+          </div>
+          <button class="btn-ghost" style="padding:0 4px;min-height:0;font-size:14px;color:var(--text3);"
+            onclick="dismissPrep()" aria-label="Not tomorrow">&times;</button>
+        </div>
+        <button style="width:100%;margin-top:9px;padding:8px;min-height:0;font-size:13px;"
+          onclick='tellCookPrep(${JSON.stringify(items.map(i=>i.name))})'>Tell the cook tonight</button>
+      </div>`;
+    }
+    // Otherwise: the most pressing prep among the dishes currently on the menu.
+    const left = hoursUntilSlot(lastSlot || mealSlot());
+    const due = menu().map(m=>({ m, pr:prepFor(m) })).filter(x=>x.pr)
+                      .sort((a,b)=>b.pr.hours - a.pr.hours)[0];
+    if (!due) return '';
+    const late = due.pr.hours > left;
+    return `<div style="margin-top:11px;border-left:2px solid ${late?'var(--mirch)':'var(--haldi)'};
+        background:${late?'var(--mirch-bg)':'var(--haldi-bg)'};padding:9px 11px;">
+      <div style="font-size:12px;color:${late?'var(--mirch)':'var(--haldi)'};line-height:1.5;">
+        ${esc(due.pr.note)}${due.pr.hours?` · start ${due.pr.hours} h ahead`:''}${late?' · too late for this meal':''}
+      </div></div>`;
   }
 
   function dismissPrep(){
     settings.prepDismissed = today();
     saveLocal();
-    renderPrepCard();
+    renderMenu();
   }
 
   // A prep order is the same shape as a normal cook order — one short spoken
@@ -845,6 +878,70 @@
     } catch(e){ /* the plain fallback order is already on screen */ }
   }
   function cap(s){ return s.charAt(0).toUpperCase()+s.slice(1); }
+
+  // One row per macro, each an honest fraction of its own target — the old
+  // stacked bar squeezed three macros into one 8px strip with arbitrary weights,
+  // which looked tidy and told you nothing. Calories lead because that's the
+  // number people actually read first.
+  function macroRow(label, got, target, colour, note){
+    const pct = Math.min(100, Math.round(got/(target||1)*100));
+    const over = got > target;
+    return `<div class="macro-row">
+      <div class="macro-head">
+        <span style="font-size:12px;color:var(--text2);">${label}</span>
+        <span class="mono" style="font-size:12px;color:${note?'var(--text3)':colour};">
+          ${note ? note : `${got}<span style="color:var(--text3);"> / ${target} g</span>`}
+        </span>
+      </div>
+      <div class="macro-track"><div class="macro-fill"
+        style="width:${pct}%;background:${over?'var(--mirch)':colour};"></div></div>
+    </div>`;
+  }
+
+  function renderMacroCard(t, got){
+    const box = document.getElementById('t-macros');
+    if (!box) return;
+    const missing = got.fibTotal - got.fibKnown;
+    const fibNote = !got.count ? '—'
+      : got.fibKnown === 0 ? '— not estimated yet'
+      : missing ? null : null;
+    const fibRow = fibNote
+      ? `<div class="macro-row">
+           <div class="macro-head">
+             <span style="font-size:12px;color:var(--text2);">Fibre</span>
+             <span class="mono" style="font-size:12px;color:var(--text3);">${fibNote}</span>
+           </div>
+           <div class="macro-track"></div>
+         </div>`
+      : macroRow('Fibre', got.fib, t.fiber || 30, 'var(--dhania)');
+
+    box.innerHTML = `
+      <div class="row" style="align-items:baseline;">
+        <span style="display:flex;align-items:baseline;gap:7px;">
+          <span class="display" style="font-size:29px;font-weight:600;">${got.kcal.toLocaleString('en-IN')}</span>
+          <span class="mono" style="font-size:12px;color:var(--text3);">/ ${(t.cal||0).toLocaleString('en-IN')} kcal</span>
+        </span>
+        <span class="eyebrow">${got.count ? got.count + (got.count===1?' meal':' meals') : 'nothing yet'}</span>
+      </div>
+      <div style="margin-top:14px;">
+        ${macroRow('Protein', got.p, t.protein, 'var(--dhania)')}
+        ${macroRow('Carbs', got.c, t.carbs, 'var(--haldi)')}
+        ${macroRow('Fat', got.f, t.fat, 'var(--mirch)')}
+        ${fibRow}
+      </div>
+      ${missing && got.fibKnown ? `<div class="tiny" style="margin-top:10px;">
+        Fibre missing for ${missing} of today's ${got.fibTotal} dishes — it fills in as they're re-estimated.</div>` : ''}`;
+  }
+
+  // Logging is the thing you do least often, so it stays folded away until asked for.
+  let loggingOpen = false;
+  function toggleLogging(){
+    loggingOpen = !loggingOpen;
+    const body = document.getElementById('t-log-body');
+    const caret = document.getElementById('t-log-caret');
+    if (body) body.style.display = loggingOpen ? '' : 'none';
+    if (caret) caret.textContent = loggingOpen ? '⌃' : '⌄';
+  }
 
   // Recognition over recall: your actual most-eaten dishes, ranked, one tap to log.
   function frequentDishes(n){
@@ -880,15 +977,6 @@
         <span>${esc(m.dish)}</span>
         <span class="tiny">${esc(m.type||'')}</span>
       </div>`).join('');
-  }
-
-  function renderKitchenPulse(){
-    const low = lowStock();
-    document.getElementById('t-lowcount').textContent = low.length ? low.length+' low' : '';
-    document.getElementById('t-lowlist').innerHTML = low.length
-      ? low.slice(0,3).map(i=>
-          `<div class="row"><span style="color:var(--text2)">${esc(i.name)}</span><span style="color:var(--mirch)">${esc(i.qty)}</span></div>`).join('')
-      : `<div class="muted">Everything's stocked.</div>`;
   }
 
   // ══════════ MEAL LOGGING ══════════
@@ -973,14 +1061,16 @@
       try {
         const r = await askJSON(
           `Estimate macros for one typical Indian home serving of "${dish}". ` +
-          `Keys: kcal, p, c, f (grams, integers).`, 200);
-        const entry = { kcal:+r.kcal||0, p:+r.p||0, c:+r.c||0, f:+r.f||0, source:'estimated' };
+          `Keys: kcal, p, c, f, fib — protein, carbs, fat and dietary fibre in grams, integers.`, 200);
+        const entry = { kcal:+r.kcal||0, p:+r.p||0, c:+r.c||0, f:+r.f||0,
+                        fib:(r.fib==null?null:+r.fib||0), source:'estimated' };
         dishMacros[key] = entry;
         renderToday();
         // Persist to the shared DB (fire-and-forget; a failed write just means
         // it'll be re-estimated next time, never a crash).
-        sheetPost({ action:'saveDishMacros', dish:dish.trim(), kcal:entry.kcal,
-          protein:entry.p, carbs:entry.c, fat:entry.f, source:'estimated', updatedBy:activePerson });
+        sheetPost({ action:'saveDishLibrary', dish:dish.trim(), kcal:entry.kcal,
+          protein:entry.p, carbs:entry.c, fat:entry.f, fiber:entry.fib,
+          source:'estimated', updatedBy:activePerson });
         return entry;
       } catch(e){ return null; }
       finally { delete estimating[key]; }
@@ -1098,6 +1188,8 @@
 
   function renderKitchen(){
     const low = lowStock();
+    const cnt = document.getElementById('k-count');
+    if (cnt) cnt.textContent = inventory.length ? inventory.length + ' items' : '';
     document.getElementById('k-low').innerHTML = low.length
       ? `<div class="card">` + low.map(i=>
           `<div class="row" style="padding:8px 0;">
@@ -1113,19 +1205,34 @@
       list.innerHTML = `<div class="card"><div class="muted">Kitchen's empty. Add what you have above — speak it, snap a photo of the shelf, or type it.</div></div>`;
       return;
     }
-    list.innerHTML = CAT_ORDER.filter(c=>groups[c]).map(c=>
-      `<div class="card" style="margin-bottom:12px;">
-        <div class="eyebrow">${esc(c)}</div>
-        <div style="margin-top:8px;">` +
-        groups[c].map(i=>
-          `<div class="row" style="padding:8px 0;border-bottom:0.5px solid var(--border);">
-            <span>${esc(i.name)}</span>
-            <span style="display:flex;align-items:center;gap:10px;">
-              <span class="mono" style="font-size:13px;color:${isLow(i.qty, i.name)?'var(--mirch)':'var(--text2)'}">${esc(i.qty)}</span>
-              <button class="btn-ghost" style="padding:4px 8px;min-height:0;" onclick="removeItem(${JSON.stringify(i.name).replace(/"/g,'&quot;')})" aria-label="Remove ${esc(i.name)}">&times;</button>
+    // Grouped, but flat inside the one card — nested cards per category was the
+    // thing that made this screen feel busy. The category is an eyebrow rule, the
+    // quantity is the only coloured element, and low stock is the only colour.
+    list.innerHTML = CAT_ORDER.filter(c=>groups[c]).map((c,ci)=>
+      `<div style="margin-top:${ci?18:14}px;">
+        <div class="eyebrow" style="padding-bottom:7px;border-bottom:0.5px solid var(--border2);">
+          ${esc(c)} <span class="mono" style="color:var(--text3);">${groups[c].length}</span>
+        </div>` +
+        groups[c].map(i=>{
+          const low = isLow(i.qty, i.name);
+          return `<div class="row" style="padding:10px 0;border-bottom:0.5px solid var(--border);">
+            <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(i.name)}</span>
+            <span style="display:flex;align-items:center;gap:12px;flex:0 0 auto;">
+              <span class="mono" style="font-size:13px;color:${low?'var(--mirch)':'var(--text2)'}">${esc(i.qty)}</span>
+              <button class="btn-ghost" style="padding:2px 4px;min-height:0;font-size:15px;color:var(--text3);"
+                onclick="removeItem(${JSON.stringify(i.name).replace(/"/g,'&quot;')})" aria-label="Remove ${esc(i.name)}">&times;</button>
             </span>
-          </div>`).join('') +
-      `</div></div>`).join('');
+          </div>`; }).join('') +
+      `</div>`).join('');
+  }
+
+  let stockOpen = false;
+  function toggleStock(){
+    stockOpen = !stockOpen;
+    const list = document.getElementById('k-list');
+    const caret = document.getElementById('k-caret');
+    if (list) list.style.display = stockOpen ? '' : 'none';
+    if (caret) caret.textContent = stockOpen ? '⌃' : '⌄';
   }
 
   async function commitKitchen(){
@@ -1156,9 +1263,9 @@
   async function removeItem(name){
     const backup = inventory.slice();
     inventory = inventory.filter(i=>i.name!==name);
-    renderKitchen(); renderKitchenPulse();
+    renderKitchen();
     toast(name + ' removed', { undo: async ()=>{
-      inventory = backup; renderKitchen(); renderKitchenPulse();
+      inventory = backup; renderKitchen();
       const it = backup.find(i=>i.name===name);
       if (it) await sheetPost({ action:'addInventoryItem', item:it.name, quantity:it.qty, updatedBy:activePerson });
       toast('Put back');
@@ -1297,8 +1404,10 @@
     // How far outside her repertoire the menu may wander. Left at "mostly
     // familiar" this keeps the menu boring in the good way — food the household
     // actually eats, that the cook can start without being taught.
-    const adv = +settings.adventure === 0 ? 0 : +settings.adventure === 2 ? 2 : 1;
-    const advRule = adv === 0
+    const adv = surprise ? 3 : (+settings.adventure === 0 ? 0 : +settings.adventure === 2 ? 2 : 1);
+    const advRule = adv === 3
+      ? `The household has asked for something NEW. Every option must be a dish they do not normally eat — nothing from the cook's known list above. Still ordinary Indian home cooking a domestic cook can pick up in one telling, but unfamiliar to this house.`
+      : adv === 0
       ? `EVERY option must come from the cook's known dishes listed above. If that means repeating a staple, repeat it — do not introduce anything new.`
       : adv === 1
       ? `At most ONE of the options may be outside the cook's known dishes, and it must still be an ordinary Indian home dish she could pick up in one telling.`
@@ -1339,14 +1448,28 @@
         prep:x.prep||'', prepHours:+x.prepHours||0, common:x.common !== false
       }));
       if (!newMenu.length) throw new Error('empty menu');
+      // Prep requirements and "is this ordinary home cooking" are facts about the
+      // dish, not about this household, so they go to the shared library. Only
+      // written when they're new, so this costs nothing on a warm library.
+      newMenu.forEach(m=>{
+        const k = m.dish.trim().toLowerCase();
+        const cur = dishMacros[k];
+        if (cur && cur.prepNote) return;
+        if (!m.prep && m.common !== false) return;
+        const payload = { action:'saveDishLibrary', dish:m.dish.trim(),
+          prepNote:m.prep||'', prepHours:m.prepHours||0, common:m.common,
+          updatedBy:activePerson };
+        defer(()=>sheetPost(payload));
+      });
       if (newPage){ pages.push(newMenu); pageIdx = pages.length - 1; }
       else { pages = [newMenu]; pageIdx = 0; }
       renderMenu();
+      surprise = false;   // one generation only, not a mode you get stuck in
     } catch(e){
       box.innerHTML = `<div class="eyebrow" style="color:var(--haldi);">Cook next</div>
         <div class="muted" style="margin-top:10px;">Couldn't build the menu. Tap to try again.</div>
         <button style="width:100%;margin-top:12px;" onclick="loadMenu(true)">Try again</button>`;
-    } finally { loadingMenu = false; }
+    } finally { loadingMenu = false; surprise = false; }
   }
 
   function whoLabel(names){
@@ -1355,38 +1478,24 @@
     return names.join(', ');
   }
 
-  // Rating badge shown on a dish based on how well the cook makes it.
-  function ratingBadge(dish){
-    const m = dishMacros[dish.toLowerCase()];
-    if (!m || !m.rating) return '';
-    if (m.rating==='favourite') return `<span class="tiny" style="color:var(--dhania);">★ cook makes this well</span>`;
-    if (m.rating==='avoid') return `<span class="tiny" style="color:var(--mirch);">△ cook makes this poorly</span>`;
-    return '';
-  }
 
-  // Tells you, before you pick, whether this is something she can just start on.
-  // Deliberately worded as information rather than a warning — an unfamiliar dish
-  // is fine, it just comes with a teaching step attached.
-  function repertoireBadge(m){
-    const k = cookKnows(m.dish);
-    if (k === 'yes') return '';
-    if (k === 'no')
-      return `<span class="tiny" style="color:var(--mirch);">✕ she doesn't make this</span>`;
-    if (m.common === false)
-      return `<span class="tiny" style="color:var(--haldi);">new to her — needs explaining</span>`;
-    return `<span class="tiny" style="color:var(--text2);">not cooked here before</span>`;
-  }
 
-  // Prep note. Turns red once there isn't enough time left before the meal, which
-  // is the whole point — a soak instruction you read at 1 pm is not information,
-  // it's an apology.
-  function prepNote(m){
-    const pr = prepFor(m);
-    if (!pr) return '';
-    const left = hoursUntilSlot(lastSlot || mealSlot());
-    const late = pr.hours > left;
-    return `<div class="tiny" style="margin-top:3px;color:${late?'var(--mirch)':'var(--haldi)'};">
-      ⏳ ${esc(pr.note)}${pr.hours?` · start ${pr.hours} h ahead`:''}${late?' · too late for this meal':''}</div>`;
+
+  // The single most decision-relevant line about a dish. Everything else — prep,
+  // missing ingredients, cook rating, the description — moves into the ⓘ panel.
+  // Ranked by what actually changes your pick: someone's strong reaction first,
+  // because the reason a dish gets rejected in this house is that one person
+  // won't eat it, not that it's 20 g of protein instead of 24.
+  function dishLine(m){
+    const who = whoLabel(m.for);
+    const notes = [];
+    Object.entries(m.hints || {}).forEach(([n,h])=>{ if (h) notes.push(`${n===activePerson?'':n+': '}${h}`.trim()); });
+    if (cookKnows(m.dish) === 'unknown' && m.common === false) notes.push('new to her');
+    if (cookKnows(m.dish) === 'no') notes.push("she doesn't make this");
+    const rating = (dishMacros[m.dish.toLowerCase()]||{}).rating;
+    if (!notes.length && rating === 'favourite') notes.push('she makes this well');
+    if (!notes.length && m.why) notes.push(m.why);
+    return esc(who) + (notes.length ? ' · ' + esc(notes.slice(0,1)[0]) : '');
   }
 
   function renderMenu(){
@@ -1401,70 +1510,93 @@
     const rows = cur.map((m,i)=>{
       const on = picked_.has(i);
       const expanded = expandedDish === i;
-      const miss = (m.missing||[]).length
-        ? `<div class="tiny" style="color:var(--mirch);margin-top:3px;">need: ${esc(m.missing.join(', '))}</div>` : '';
-      // Waiter hint for the active person, if any.
-      const myHint = m.hints && m.hints[activePerson]
-        ? `<div class="tiny" style="color:var(--haldi);margin-top:3px;">${esc(m.hints[activePerson])}</div>` : '';
-      const badge = ratingBadge(m.dish) || repertoireBadge(m);
-      const prepLine = prepNote(m);
-      const detailBlock = expanded ? `
-        <div style="margin-top:8px;padding:10px;background:var(--surface2);border-radius:8px;" onclick="event.stopPropagation()">
-          ${m.details===null ? `<div class="muted">Loading<span class="dots"></span></div>`
-            : m.details===false ? `<div class="muted">Couldn't load details.</div>`
-            : `<div style="font-size:13px;line-height:1.6;">${esc(m.details.what||'')}</div>
-               ${m.details.portion?`<div class="tiny mono" style="margin-top:6px;">Portion: ${esc(m.details.portion)}</div>`:''}
-               ${m.details.serving?`<div class="tiny" style="margin-top:4px;">${esc(m.details.serving)}</div>`:''}`}
-        </div>` : '';
-      return `<div class="menu-row ${on?'on':''}" onclick="toggleDish(${i})" role="button" aria-pressed="${on}"
-                style="padding:11px 0;border-bottom:0.5px solid var(--border);cursor:pointer;">
+      const d = m.details;
+      const pr = prepFor(m);
+      const rating = (dishMacros[m.dish.toLowerCase()]||{}).rating;
+      const detailBits = expanded ? [
+        d === null ? `<div class="muted">Loading<span class="dots"></span></div>`
+          : d === false ? `<div class="muted">Couldn't load the details. Tap ⓘ again to retry.</div>`
+          : `<div style="font-size:13px;line-height:1.6;">${esc(d.what||'')}</div>
+             ${d.portion?`<div class="tiny mono" style="margin-top:6px;">Portion ${esc(d.portion)}</div>`:''}
+             ${d.serving?`<div class="tiny" style="margin-top:4px;">${esc(d.serving)}</div>`:''}`,
+        pr ? `<div class="tiny" style="margin-top:7px;color:var(--haldi);">${esc(pr.note)}${pr.hours?` · ${pr.hours} h ahead`:''}</div>` : '',
+        (m.missing||[]).length ? `<div class="tiny" style="margin-top:5px;color:var(--mirch);">Not in the kitchen: ${esc(m.missing.join(', '))}</div>` : '',
+        rating === 'avoid' ? `<div class="tiny" style="margin-top:5px;color:var(--mirch);">Hasn't come out well before</div>` : '',
+        cookKnows(m.dish) !== 'yes' ? `<div class="tiny" style="margin-top:5px;">She hasn't made this — "Tell cook" can read her the method.</div>` : ''
+      ].filter(Boolean).join('') : '';
+
+      return `<div class="menu-row" onclick="toggleDish(${i})" role="button" aria-pressed="${on}"
+                style="padding:11px 0;${i<cur.length-1?'border-bottom:0.5px solid var(--border);':''}cursor:pointer;">
           <div style="display:flex;gap:11px;">
-            <div style="width:22px;height:22px;border-radius:6px;flex:0 0 auto;margin-top:2px;
+            <div style="width:21px;height:21px;border-radius:6px;flex:0 0 auto;margin-top:2px;
               border:1.5px solid ${on?'var(--haldi)':'var(--border2)'};background:${on?'var(--haldi)':'transparent'};
               display:flex;align-items:center;justify-content:center;color:var(--on-accent);font-size:13px;">${on?'✓':''}</div>
-            <div style="flex:1;">
-              <div class="row"><span style="font-weight:600;">${esc(m.dish)}</span>
-                <span style="display:flex;align-items:center;gap:8px;">
-                  <span class="tiny mono" style="color:var(--dhania);">${m.protein?m.protein+'p':''}</span>
-                  <button class="btn-ghost" style="padding:2px 7px;min-height:0;font-size:15px;"
-                    onclick="event.stopPropagation();expandDish(${i})" aria-label="Dish details">${expanded?'▾':'ⓘ'}</button>
-                </span></div>
-              <div class="tiny" style="margin-top:2px;">${esc(whoLabel(m.for))}${m.why?' · '+esc(m.why):''}</div>
-              ${myHint}${badge?`<div style="margin-top:3px;">${badge}</div>`:''}${prepLine}${miss}
-              ${detailBlock}
+            <div style="flex:1;min-width:0;">
+              <div class="row">
+                <span class="display" style="font-weight:500;font-size:16px;">${esc(m.dish)}</span>
+                <span style="display:flex;align-items:center;gap:9px;">
+                  <span class="mono" style="font-size:12px;color:var(--dhania);">${m.protein?m.protein+'p':''}</span>
+                  <button class="btn-ghost" style="padding:2px 6px;min-height:0;font-size:15px;"
+                    onclick="event.stopPropagation();expandDish(${i})" aria-label="About ${esc(m.dish)}">${expanded?'▾':'ⓘ'}</button>
+                </span>
+              </div>
+              <div class="tiny" style="margin-top:3px;color:var(--text2);">${dishLine(m)}</div>
+              ${expanded ? `<div style="margin-top:8px;padding:10px;background:var(--surface2);border-radius:8px;"
+                 onclick="event.stopPropagation()">${detailBits}</div>` : ''}
             </div>
           </div>
         </div>`;
     }).join('');
 
     const n = picked_.size;
-    const pager = pages.length > 1 || pageIdx > 0 ? `
-      <div class="row" style="margin-top:12px;">
-        <button class="btn-ghost" style="padding:4px 10px;min-height:0;" onclick="prevPage()" ${pageIdx>0?'':'disabled style="opacity:.35;"'}>‹ Back</button>
-        <span class="tiny">Page ${pageIdx+1}${pages.length>pageIdx+1?' of '+pages.length:''}</span>
-        <button class="btn-ghost" style="padding:4px 10px;min-height:0;" onclick="otherMenu()">More ›</button>
-      </div>` : `
-      <div class="row" style="margin-top:12px;">
-        <span></span>
-        <button class="btn-ghost" style="padding:4px 10px;min-height:0;font-size:12px;" onclick="otherMenu()">More ideas ›</button>
-      </div>`;
-
     box.innerHTML = `
-      <div class="eyebrow" style="color:var(--haldi);">Cook next · ${mealSlot()}${craving?' · '+esc(craving):''}</div>
-      <div style="margin-top:8px;">${rows}</div>
-      ${pager}
-      <div style="margin-top:12px;display:flex;gap:8px;">
-        <input id="crave-box" placeholder="Want something specific? e.g. rajma"
-          style="flex:1;" onkeydown="if(event.key==='Enter')cravingSubmit()" value="${esc(craving)}">
-        <button onclick="cravingSubmit()" style="flex:0 0 auto;">Find</button>
+      <div class="row">
+        <span class="eyebrow" style="color:var(--haldi);">Cook next · ${mealSlot()}${craving?' · '+esc(craving):''}</span>
+        <button class="btn-ghost" style="padding:5px 11px;min-height:0;font-size:12px;
+          border:0.5px solid var(--border);border-radius:99px;" onclick="surpriseMenu()">Try something new</button>
       </div>
+      ${prepStrip()}
+      <div style="margin-top:6px;">${rows}</div>
+
+      <div class="row" style="margin-top:10px;padding-top:10px;border-top:0.5px solid var(--border);">
+        <button class="btn-ghost" style="padding:2px 0;min-height:0;font-size:12px;"
+          onclick="toggleCrave()">${craveOpen?'Hide search':'Something specific'}</button>
+        <span style="display:flex;gap:12px;align-items:center;">
+          ${pageIdx>0?`<button class="btn-ghost" style="padding:2px 0;min-height:0;font-size:12px;" onclick="prevPage()">‹ Back</button>`:''}
+          <button class="btn-ghost" style="padding:2px 0;min-height:0;font-size:12px;" onclick="otherMenu()">More ideas ›</button>
+        </span>
+      </div>
+      ${craveOpen ? `<div style="margin-top:10px;display:flex;gap:8px;">
+        <input id="crave-box" placeholder="e.g. rajma" style="flex:1;"
+          onkeydown="if(event.key==='Enter')cravingSubmit()" value="${esc(craving)}">
+        <button onclick="cravingSubmit()" style="flex:0 0 auto;">Find</button>
+      </div>` : ''}
+
       <div class="btn-row" style="margin-top:12px;">
         <button class="btn-primary" onclick="tellCookMenu()" ${n?'':'disabled style="opacity:.5;"'}>
           ${n>1?`Tell cook (${n})`:'Tell cook'}
         </button>
-        <button style="flex:0 0 auto;padding:11px 14px;" onclick="logMenu()" ${n?'':'disabled style="opacity:.5;"'}>Log</button>
+        <button style="flex:0 0 auto;padding:11px 16px;" onclick="logMenu()" ${n?'':'disabled style="opacity:.5;"'}>Log</button>
       </div>
-      ${n?'':'<div class="tiny" style="margin-top:8px;">Tick what you want made. Tap ⓘ to see what a dish is.</div>'}`;
+      ${n?'':'<div class="tiny" style="margin-top:8px;">Tick what you want made. Tap ⓘ for what a dish is and what it needs.</div>'}`;
+  }
+
+  let craveOpen = false;
+  function toggleCrave(){
+    craveOpen = !craveOpen;
+    renderMenu();
+    if (craveOpen){ const el = document.getElementById('crave-box'); if (el) el.focus(); }
+  }
+
+  // Deliberately different from "More ideas": that keeps looking within what suits
+  // the household, this asks for dishes it doesn't normally eat. It overrides the
+  // adventure dial for one generation rather than changing the setting.
+  let surprise = false;
+  function surpriseMenu(){
+    surprise = true;
+    rejected = repertoire(20);
+    craving = '';
+    loadMenu(true, true);
   }
 
   let expandedDish = -1;
@@ -2076,8 +2208,10 @@
     const lang = LANGS[settings.cookLang] || LANGS.hi;
     const total = Object.keys(dishMacros).length;
     const confirmed = Object.values(dishMacros).filter(d=>d.source==='confirmed').length;
+    const noFib = Object.values(dishMacros).filter(d=>d.fib==null).length;
     document.getElementById('y-dishcount').textContent = total
-      ? `${total} dish${total===1?'':'es'} · ${confirmed} confirmed, ${total-confirmed} estimated`
+      ? `${total} dish${total===1?'':'es'} · ${confirmed} confirmed, ${total-confirmed} estimated` +
+        (noFib ? ` · ${noFib} without fibre yet` : '')
       : 'No dishes yet — they build up as you log meals.';
 
     const advLabel = ['only what she knows','mostly familiar','happy to try new'][+settings.adventure] || 'mostly familiar';
@@ -2192,7 +2326,30 @@
       <p class="muted" style="margin:8px 0 14px;">Per-serving macros, shared across all devices.
       Tap any dish to correct it — corrections are marked confirmed and won't be overwritten.</p>
       <input id="dbq" placeholder="Search dishes" oninput="filterDishDB(this.value)" style="margin-bottom:12px;">
-      <div id="db-list">${dishDBRows(entries)}</div>`);
+      <div id="db-list">${dishDBRows(entries)}</div>
+      <div class="divider"></div>
+      <div class="tiny" style="margin-bottom:8px;">
+        Nutrition now lives in a shared library every household reads from, while what
+        your cook can make stays private to this household. Run this once to move the
+        old combined sheet across — it copies rather than deletes, so nothing is lost.
+      </div>
+      <button style="width:100%;" onclick="runLibrarySplit()">Move to the shared library</button>
+      <div class="tiny" id="split-status" style="margin-top:8px;"></div>`);
+  }
+
+  // One-off, idempotent, and non-destructive — the old sheet is left in place.
+  async function runLibrarySplit(){
+    const el = document.getElementById('split-status');
+    if (el) el.textContent = 'Moving…';
+    try {
+      const r = await sheetPost({ action:'splitDishMacros' });
+      if (el) el.textContent = r && r.success
+        ? `Moved ${r.libraryRows} dishes to the library and ${r.skillRows} cook notes to this household.`
+        : 'Something went wrong. The old sheet is untouched — try again.';
+      await syncAll(true);
+    } catch(e){
+      if (el) el.textContent = 'Couldn\'t reach the sheet. The old data is untouched.';
+    }
   }
 
   function dishDBRows(entries){
@@ -2227,9 +2384,10 @@
       <h2>${esc(cap(key))}</h2>
       <p class="muted" style="margin:8px 0 16px;">Per one serving. ${m.source==='confirmed'
         ? 'This is confirmed.' : 'This is a Claude estimate — correcting it marks it confirmed.'}</p>
-      ${[['kcal','Calories','kcal'],['p','Protein','g'],['c','Carbs','g'],['f','Fat','g']].map(([k,l,u])=>
+      ${[['kcal','Calories','kcal'],['p','Protein','g'],['c','Carbs','g'],['f','Fat','g'],['fib','Fibre','g']].map(([k,l,u])=>
         `<div class="field"><label for="ed-${k}">${l} (${u})</label>
-          <input class="mono" type="number" id="ed-${k}" value="${m[k]}"></div>`).join('')}
+          <input class="mono" type="number" id="ed-${k}" value="${m[k]==null?'':m[k]}"
+            ${k==='fib'&&m.fib==null?'placeholder="not estimated yet"':''}></div>`).join('')}
       <button class="btn-primary" style="width:100%;" onclick="saveDish(${JSON.stringify(key).replace(/"/g,'&quot;')})">
         Save as confirmed
       </button>`);
@@ -2241,12 +2399,14 @@
     m.p    = +document.getElementById('ed-p').value || 0;
     m.c    = +document.getElementById('ed-c').value || 0;
     m.f    = +document.getElementById('ed-f').value || 0;
+    const fibEl = document.getElementById('ed-fib');
+    m.fib  = fibEl && fibEl.value !== '' ? +fibEl.value : m.fib;
     m.source = 'confirmed';
     dishMacros[key] = m;
     closeSheet(); renderAll();
     toast('Saved as confirmed');
-    await sheetPost({ action:'saveDishMacros', dish:cap(key), kcal:m.kcal,
-      protein:m.p, carbs:m.c, fat:m.f, source:'confirmed', updatedBy:activePerson });
+    await sheetPost({ action:'saveDishLibrary', dish:cap(key), kcal:m.kcal,
+      protein:m.p, carbs:m.c, fat:m.f, fiber:m.fib, source:'confirmed', updatedBy:activePerson });
   }
 
   function openCookSettings(){
