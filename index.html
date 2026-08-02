@@ -227,7 +227,11 @@
     <div class="pad" style="margin-top:18px;">
       <div class="row" style="margin-bottom:10px;">
         <h2>Running low</h2>
-        <button style="padding:6px 12px;min-height:0;font-size:13px;" onclick="openShopSheet()">Shopping list</button>
+        <span style="display:flex;gap:8px;">
+          <button class="btn-ghost" style="padding:6px 10px;min-height:0;font-size:13px;"
+            onclick="refreshKitchen()" aria-label="Reload from the sheet">Refresh</button>
+          <button style="padding:6px 12px;min-height:0;font-size:13px;" onclick="openShopSheet()">Shopping list</button>
+        </span>
       </div>
       <div id="k-low"></div>
     </div>
@@ -242,6 +246,10 @@
           </span>
         </div>
         <div id="k-list" style="display:none;"></div>
+        <div id="k-clear" style="display:none;margin-top:14px;">
+          <button style="width:100%;color:var(--mirch);border-color:var(--border);"
+            onclick="confirmClearKitchen()">Empty the kitchen</button>
+        </div>
       </div>
     </div>
   </section>
@@ -334,7 +342,11 @@
         <div class="eyebrow">Make this better</div>
         <p class="muted" style="margin:10px 0;">Something annoying, broken, or missing? Tell me and it gets read.</p>
         <textarea id="y-fb" placeholder="The meal log takes too many taps when…"></textarea>
-        <button class="btn-primary" style="width:100%;margin-top:10px;" onclick="sendFeedback()">Send feedback</button>
+        <div class="btn-row" style="margin-top:10px;">
+          <button onclick="attachFeedbackPhoto()" id="y-fb-photo">Add a screenshot</button>
+          <button class="btn-primary" onclick="sendFeedback()">Send feedback</button>
+        </div>
+        <div class="tiny" id="y-fb-status" style="margin-top:8px;"></div>
       </div>
     </div>
 
@@ -572,7 +584,8 @@
           if (!members[r.person]) members[r.person] = Object.assign({}, BLANK);
           Object.assign(members[r.person], {
             cal:+r.calories||BLANK.cal, protein:+r.protein||BLANK.protein,
-            carbs:+r.carbs||BLANK.carbs, fat:+r.fat||BLANK.fat, weight:+r.weight||BLANK.weight
+            carbs:+r.carbs||BLANK.carbs, fat:+r.fat||BLANK.fat, weight:+r.weight||BLANK.weight,
+            fiber:+r.fiber||BLANK.fiber
           });
         });
         Object.keys(members).forEach(n=>{ if (!live.includes(n)) delete members[n]; });
@@ -586,7 +599,11 @@
           if (r.likes) p.likes = r.likes;
           if (r.dislikes) p.dislikes = r.dislikes;
           if (r.allergies) p.allergies = r.allergies;
-          if (r.favourites) p.favourites = r.favourites;
+          // Guard against the legacy six-column Preferences row, where UpdatedAt
+          // landed in the Favourites slot. The backend repairs the sheet; this
+          // stops a stale localStorage copy showing a date as someone's favourite.
+          if (r.favourites && !/^\d{1,2}\/\d{1,2}\/\d{2,4}[,\s]/.test(String(r.favourites))) p.favourites = r.favourites;
+          else if (r.favourites) p.favourites = '';
         });
 
       if (wk && wk.workouts)
@@ -913,7 +930,7 @@
            </div>
            <div class="macro-track"></div>
          </div>`
-      : macroRow('Fibre', got.fib, t.fiber || 30, 'var(--dhania)');
+      : macroRow('Fibre', got.fib, t.fiber || BLANK.fiber, 'var(--dhania)');
 
     box.innerHTML = `
       <div class="row" style="align-items:baseline;">
@@ -1190,6 +1207,8 @@
     const low = lowStock();
     const cnt = document.getElementById('k-count');
     if (cnt) cnt.textContent = inventory.length ? inventory.length + ' items' : '';
+    const clear = document.getElementById('k-clear');
+    if (clear) clear.style.display = stockOpen && inventory.length ? '' : 'none';
     document.getElementById('k-low').innerHTML = low.length
       ? `<div class="card">` + low.map(i=>
           `<div class="row" style="padding:8px 0;">
@@ -1231,8 +1250,48 @@
     stockOpen = !stockOpen;
     const list = document.getElementById('k-list');
     const caret = document.getElementById('k-caret');
+    const clear = document.getElementById('k-clear');
     if (list) list.style.display = stockOpen ? '' : 'none';
+    if (clear) clear.style.display = stockOpen && inventory.length ? '' : 'none';
     if (caret) caret.textContent = stockOpen ? '⌃' : '⌄';
+  }
+
+  // Pulls the shelf back from the Sheet. Worth having as its own button: the
+  // cook or another person may have updated stock from their phone, and until
+  // now the only way to see that was to reopen the app.
+  async function refreshKitchen(){
+    toast('Refreshing…');
+    await syncAll(true);
+    toast('Kitchen up to date');
+  }
+
+  // A full reset, because the realistic repair for a badly mis-scanned shelf is
+  // to start again rather than tap × forty times. Confirmed, because it isn't undoable.
+  function confirmClearKitchen(){
+    openSheet(`
+      <h2>Empty the kitchen?</h2>
+      <p class="muted" style="margin:8px 0 16px;">This removes all ${inventory.length} items from
+      the kitchen list for everyone, not just this phone. Your meal history, dishes and
+      shopping list aren't touched. Re-scan the shelf with a photo to start again.</p>
+      <div class="btn-row">
+        <button onclick="closeSheet()">Keep them</button>
+        <button class="btn-primary" style="background:var(--mirch);color:#fff;"
+          onclick="clearKitchen()">Empty it</button>
+      </div>`);
+  }
+
+  async function clearKitchen(){
+    closeSheet();
+    const backup = inventory.slice();
+    inventory = [];
+    renderKitchen();
+    toast('Kitchen emptied');
+    try {
+      await sheetPost({ action:'setInventory', items:[] });
+    } catch(e){
+      inventory = backup; renderKitchen();
+      toast("Couldn't reach the sheet — nothing was removed");
+    }
   }
 
   async function commitKitchen(){
@@ -2234,7 +2293,7 @@
     const p = me();
     openSheet(`<h2>Daily targets for ${esc(activePerson)}</h2>
       <p class="muted" style="margin:8px 0 16px;">Set these yourself, or let Claude work them out from your body stats.</p>
-      ${[['cal','Calories','kcal'],['protein','Protein','g'],['carbs','Carbs','g'],['fat','Fat','g']].map(([k,l,u])=>
+      ${[['cal','Calories','kcal'],['protein','Protein','g'],['carbs','Carbs','g'],['fat','Fat','g'],['fiber','Fibre','g']].map(([k,l,u])=>
         `<div class="field"><label for="tg-${k}">${l} (${u})</label>
           <input class="mono" type="number" id="tg-${k}" value="${p[k]}"></div>`).join('')}
       <div class="divider"></div>
@@ -2266,12 +2325,15 @@
     document.getElementById('tg-protein').value = protein;
     document.getElementById('tg-carbs').value = carbs;
     document.getElementById('tg-fat').value = fat;
+    // 14 g per 1000 kcal is the standard dietary reference — it scales with intake
+    // rather than being a flat number, which is why it belongs in the auto-calc.
+    document.getElementById('tg-fiber').value = Math.round(tdee / 1000 * 14);
     toast('Estimated from your stats — adjust if you want');
   }
 
   async function saveTargets(){
     const p = me();
-    ['cal','protein','carbs','fat','age','height','weight'].forEach(k=>{
+    ['cal','protein','carbs','fat','fiber','age','height','weight'].forEach(k=>{
       const el = document.getElementById('tg-'+k);
       if (el && el.value) p[k] = +el.value;
     });
@@ -2279,7 +2341,7 @@
     saveLocal(); closeSheet(); renderAll();
     toast('Targets saved');
     await sheetPost({ action:'updateMacros', person:activePerson, calories:p.cal,
-      protein:p.protein, carbs:p.carbs, fat:p.fat, weight:p.weight });
+      protein:p.protein, carbs:p.carbs, fat:p.fat, weight:p.weight, fiber:p.fiber });
   }
 
   function openPrefsSheet(){
@@ -2327,29 +2389,7 @@
       Tap any dish to correct it — corrections are marked confirmed and won't be overwritten.</p>
       <input id="dbq" placeholder="Search dishes" oninput="filterDishDB(this.value)" style="margin-bottom:12px;">
       <div id="db-list">${dishDBRows(entries)}</div>
-      <div class="divider"></div>
-      <div class="tiny" style="margin-bottom:8px;">
-        Nutrition now lives in a shared library every household reads from, while what
-        your cook can make stays private to this household. Run this once to move the
-        old combined sheet across — it copies rather than deletes, so nothing is lost.
-      </div>
-      <button style="width:100%;" onclick="runLibrarySplit()">Move to the shared library</button>
-      <div class="tiny" id="split-status" style="margin-top:8px;"></div>`);
-  }
-
-  // One-off, idempotent, and non-destructive — the old sheet is left in place.
-  async function runLibrarySplit(){
-    const el = document.getElementById('split-status');
-    if (el) el.textContent = 'Moving…';
-    try {
-      const r = await sheetPost({ action:'splitDishMacros' });
-      if (el) el.textContent = r && r.success
-        ? `Moved ${r.libraryRows} dishes to the library and ${r.skillRows} cook notes to this household.`
-        : 'Something went wrong. The old sheet is untouched — try again.';
-      await syncAll(true);
-    } catch(e){
-      if (el) el.textContent = 'Couldn\'t reach the sheet. The old data is untouched.';
-    }
+`);
   }
 
   function dishDBRows(entries){
@@ -2517,15 +2557,54 @@
     }, 6200);
   }
 
+  // A screenshot says more about a layout bug than a paragraph can. Held in memory
+  // until send, so picking a photo and then changing your mind costs nothing.
+  let feedbackPhoto = null;
+  function attachFeedbackPhoto(){
+    const input = document.createElement('input');
+    input.type = 'file'; input.accept = 'image/*';
+    input.onchange = async () => {
+      const file = input.files[0];
+      if (!file) return;
+      if (file.size > 4 * 1024 * 1024){
+        setFeedbackStatus("That image is over 4 MB — a screenshot rather than a photo works better.");
+        return;
+      }
+      try {
+        const b64 = await new Promise((res,rej)=>{
+          const r = new FileReader();
+          r.onload = ()=> res(r.result.split(',')[1]);
+          r.onerror = rej;
+          r.readAsDataURL(file);
+        });
+        feedbackPhoto = { b64, type:file.type };
+        setFeedbackStatus('Screenshot attached · <a href="#" onclick="clearFeedbackPhoto();return false;" style="color:var(--haldi);">remove</a>');
+      } catch(e){ setFeedbackStatus("Couldn't read that image. Try another."); }
+    };
+    input.click();
+  }
+  function clearFeedbackPhoto(){ feedbackPhoto = null; setFeedbackStatus(''); }
+  function setFeedbackStatus(html){
+    const el = document.getElementById('y-fb-status');
+    if (el) el.innerHTML = html;
+  }
+
   async function sendFeedback(){
     const el = document.getElementById('y-fb');
     const txt = el.value.trim();
     if (!txt){ toast('Write something first'); return; }
+    const photo = feedbackPhoto;
     el.value = '';
-    toast('Sent — thank you');
+    clearFeedbackPhoto();
+    toast(photo ? 'Sending with the screenshot…' : 'Sent — thank you');
     const r = await sheetPost({ action:'saveFeedback', person:activePerson, message:txt,
-      screen, version:VERSION });
-    if (!r || !r.success) toast("Couldn't send that. Try again when you're back online");
+      screen, version:VERSION,
+      photoBase64: photo ? photo.b64 : '', photoType: photo ? photo.type : '' });
+    if (!r || !r.success){ toast("Couldn't send that. Try again when you're back online"); return; }
+    // The words matter more than the image, so a failed upload is reported rather
+    // than treated as a failed send — the feedback itself is already saved.
+    if (r.photoAttempted && !r.photoSaved) toast('Feedback saved, but the screenshot didn\'t upload');
+    else if (photo) toast('Sent with the screenshot — thank you');
   }
 
   // ══════════ ONBOARDING ══════════
