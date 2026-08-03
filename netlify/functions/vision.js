@@ -1,5 +1,4 @@
 exports.handler = async (event) => {
-  // CORS headers
   const headers = {
     'Access-Control-Allow-Origin': '*',
     'Content-Type': 'application/json'
@@ -15,36 +14,40 @@ exports.handler = async (event) => {
 
   try {
     const body = JSON.parse(event.body);
-    const { imageBase64, taskType } = body;
+    const { imageBase64, imageType, taskType } = body;
 
     if (!imageBase64 || imageBase64.length < 100) {
       return { statusCode: 400, headers, body: JSON.stringify({ error: 'Invalid image' }) };
     }
 
-    // Ensure we have API key
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
-      console.error('ANTHROPIC_API_KEY not set');
-      return { statusCode: 500, headers, body: JSON.stringify({ error: 'Server configuration error' }) };
+      return { statusCode: 500, headers, body: JSON.stringify({ error: 'API key not configured' }) };
     }
 
-    // Determine the prompt based on task type
-    let systemPrompt = '';
-    
-    if (taskType === 'nutrition-label') {
-      systemPrompt = 'Extract nutrition info from this label. Return JSON: {protein, calories, carbs, fat, fiber, serving_size}. All numbers only, null if missing.';
-    } else if (taskType === 'inventory-photo') {
-      systemPrompt = 'Identify all visible food items in this photo. Return JSON with key "items": array of {name, quantity} objects only.';
-    } else if (taskType === 'order-screenshot') {
-      systemPrompt = 'Extract items from this order screenshot. Return JSON with key "items": array of {name, quantity, price} objects only.';
-    } else if (taskType === 'dish-recognition') {
-      systemPrompt = 'Identify this cooked dish and estimate macros for the full portion shown. Return JSON: {dish_name, components (array), protein, calories, carbs, fat, fiber}. Numbers only.';
-    } else {
-      return { statusCode: 400, headers, body: JSON.stringify({ error: 'Unknown task type' }) };
+    const prompts = {
+      'nutrition-label': 'Extract nutrition info from this label. Return JSON only: {"protein":0,"calories":0,"carbs":0,"fat":0,"fiber":0,"serving_size":""}. Numbers only, null if missing.',
+      'inventory-photo': 'This image is EITHER a photo of food/groceries (a shelf, fridge, counter or bag) OR a screenshot of a grocery order or receipt (Blinkit, Zepto, Instamart, BigBasket, DMart, Swiggy). Work out which, then list every food item with its quantity. For a screenshot, read the quantity from the listing (e.g. "500 g", "1 L", "6 pieces") and ignore prices, delivery fees, offers and totals. For a photo, estimate the quantity from what is visible. Indian grocery names. Return JSON only: {"items":[{"name":"","quantity":""}]}',
+      'order-screenshot': 'Extract all ordered items. Return JSON only: {"items":[{"name":"","quantity":"","price":0}]}',
+      'dish-recognition': 'Identify this dish and estimate macros for the full portion. Return JSON only: {"dish_name":"","components":[],"protein":0,"calories":0,"carbs":0,"fat":0,"fiber":0}'
+    };
+
+    const prompt = prompts[taskType];
+    if (!prompt) {
+      return { statusCode: 400, headers, body: JSON.stringify({ error: 'Unknown task type: ' + taskType }) };
     }
 
-    // Call Anthropic API with vision
-    const claudeResponse = await fetch('https://api.anthropic.com/v1/messages', {
+    // Claude's vision API accepts only these four. The v2 frontend re-encodes
+    // everything to JPEG before sending, but v1 (and any older client) forwards
+    // the raw type, and an iPhone HEIC there would 400 with an opaque message.
+    // Falling back to jpeg is the honest guess for anything unrecognised.
+    const OK_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    const sent = String(imageType || '').toLowerCase();
+    const mediaType = OK_TYPES.includes(sent) ? sent
+                    : sent === 'image/jpg' ? 'image/jpeg'
+                    : 'image/jpeg';
+
+    const claudeResp = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'x-api-key': apiKey,
@@ -52,67 +55,53 @@ exports.handler = async (event) => {
         'content-type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'claude-opus-4-1',
+        model: 'claude-sonnet-4-5',
         max_tokens: 1024,
-        messages: [
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'image',
-                source: {
-                  type: 'base64',
-                  media_type: 'image/jpeg',
-                  data: imageBase64
-                }
-              },
-              {
-                type: 'text',
-                text: systemPrompt
+        messages: [{
+          role: 'user',
+          content: [
+            {
+              type: 'image',
+              source: {
+                type: 'base64',
+                media_type: mediaType,
+                data: imageBase64
               }
-            ]
-          }
-        ]
+            },
+            {
+              type: 'text',
+              text: prompt
+            }
+          ]
+        }]
       })
     });
 
-    const responseText = await claudeResponse.text();
-    
-    if (!claudeResponse.ok) {
-      console.error('Claude API error:', claudeResponse.status, responseText.substring(0, 200));
-      return { 
-        statusCode: claudeResponse.status, 
-        headers, 
-        body: JSON.stringify({ error: 'Vision API failed: ' + claudeResponse.status }) 
-      };
+    const responseText = await claudeResp.text();
+
+    if (!claudeResp.ok) {
+      let errMsg = 'Claude API error ' + claudeResp.status;
+      try {
+        const errData = JSON.parse(responseText);
+        errMsg = errData.error?.message || errMsg;
+      } catch(e) {}
+      console.error('Claude error:', errMsg, responseText.substring(0, 300));
+      return { statusCode: 500, headers, body: JSON.stringify({ error: errMsg }) };
     }
 
     const responseData = JSON.parse(responseText);
-    
-    if (responseData.error) {
-      console.error('Claude error:', responseData.error);
-      return { statusCode: 400, headers, body: JSON.stringify({ error: responseData.error.message || 'Claude API error' }) };
-    }
-
-    // Extract text from response
     const extractedText = responseData.content
-      .filter(block => block.type === 'text')
-      .map(block => block.text)
+      .filter(b => b.type === 'text')
+      .map(b => b.text)
       .join('');
 
-    // Parse the JSON response from Claude
-    let parsedData;
-    try {
-      const jsonMatch = extractedText.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        return { statusCode: 400, headers, body: JSON.stringify({ error: 'Could not parse response' }) };
-      }
-      parsedData = JSON.parse(jsonMatch[0]);
-    } catch (e) {
-      console.error('Parse error:', e);
-      return { statusCode: 400, headers, body: JSON.stringify({ error: 'Invalid response format' }) };
+    // Extract JSON from response
+    const jsonMatch = extractedText.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      return { statusCode: 200, headers, body: JSON.stringify({ success: true, data: { raw: extractedText } }) };
     }
 
+    const parsedData = JSON.parse(jsonMatch[0]);
     return {
       statusCode: 200,
       headers,
@@ -120,11 +109,11 @@ exports.handler = async (event) => {
     };
 
   } catch (error) {
-    console.error('Error:', error.message);
+    console.error('Handler error:', error.message);
     return {
       statusCode: 500,
       headers,
-      body: JSON.stringify({ error: error.message || 'Server error' })
+      body: JSON.stringify({ error: error.message })
     };
   }
 };
