@@ -15,6 +15,7 @@
     --text:#1C1814; --text2:#787064; --text3:#9A9184;
     --haldi:#B8791A; --dhania:#5C7F2E; --mirch:#A83E27;
     --haldi-bg:#FAF0DC; --dhania-bg:#EDF3E2; --mirch-bg:#FBEAE5;
+    --cook-surface:#FFFBF2; --cook-border:#E8D9B8;
     --on-accent:#F5F3ED; --accent-solid:#1C1814;
     /* Three roles. Bricolage Grotesque is the voice — a variable grotesque with
        slightly irregular proportions, warm rather than corporate, used only for
@@ -32,6 +33,7 @@
       --text:#F3EDE4; --text2:#A69B8B; --text3:#6F675C;
       --haldi:#E0A02E; --dhania:#7FA34A; --mirch:#C4553B;
       --haldi-bg:#2B2213; --dhania-bg:#1F2617; --mirch-bg:#2B1A15;
+      --cook-surface:#2A2318; --cook-border:#4C3F2A;
       --on-accent:#231903; --accent-solid:#E0A02E;
     }
   }
@@ -62,6 +64,12 @@
 
   .card { background:var(--surface); border:0.5px solid var(--border); border-radius:14px; padding:15px; }
   .card + .card { margin-top:12px; }
+  /* Cook next is the reason the app gets opened, so it reads as a different
+     object from the day's record-keeping: raised, warmer, its own edge. */
+  .card-cook {
+    background:var(--cook-surface); border:0.5px solid var(--cook-border);
+    box-shadow:0 1px 2px rgba(0,0,0,.05), 0 6px 18px -8px rgba(0,0,0,.14);
+  }
   .row { display:flex; align-items:center; justify-content:space-between; gap:10px; }
 
   button, .btn {
@@ -94,10 +102,13 @@
   .chip.on { border-color:var(--haldi); color:var(--haldi); }
   .chips { display:flex; flex-wrap:wrap; gap:8px; }
 
-  .macro-row + .macro-row { margin-top:11px; }
-  .macro-head { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:5px; }
-  .macro-track { height:5px; border-radius:3px; background:var(--surface2); overflow:hidden; }
+  /* Tightened: same four rows, same honest fractions, roughly a third less
+     height, so Cook next is on screen without scrolling on a 375px phone. */
+  .macro-row + .macro-row { margin-top:7px; }
+  .macro-head { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:3px; }
+  .macro-track { height:4px; border-radius:2px; background:var(--surface2); overflow:hidden; }
   .macro-fill { height:100%; transition:width .5s ease; }
+  #t-macros { padding:12px 15px; }
 
   nav {
     position:fixed; bottom:0; left:0; right:0; display:flex;
@@ -178,7 +189,7 @@
     </div>
 
     <div class="pad" style="margin-top:12px;">
-      <div class="card" id="t-cook">
+      <div class="card card-cook" id="t-cook">
         <div class="eyebrow" style="color:var(--haldi);">Cook next</div>
         <div style="margin-top:10px;" class="muted">Working out what to suggest<span class="dots"></span></div>
       </div>
@@ -217,7 +228,7 @@
         <textarea id="k-box" placeholder="2 kg atta&#10;500 g paneer&#10;1 L milk"></textarea>
         <div class="btn-row" style="margin-top:10px;">
           <button id="k-mic" onclick="micTo('k-box','k-mic')">Speak</button>
-          <button onclick="scanTo('k-box')">Photo</button>
+          <button onclick="scanTo('k-box')">Photo / upload</button>
         </div>
         <button class="btn-primary" style="width:100%;margin-top:8px;" onclick="commitKitchen()">Update kitchen</button>
         <div class="tiny" id="k-status" style="margin-top:8px;"></div>
@@ -323,6 +334,19 @@
 
     <div class="pad" style="margin-top:12px;">
       <div class="card">
+        <div class="row" onclick="toggleWishlist()" style="cursor:pointer;">
+          <h2>Wishlist</h2>
+          <span style="display:flex;align-items:center;gap:9px;">
+            <span class="tiny" id="y-wish-count"></span>
+            <span class="tiny" id="y-wish-caret" style="font-size:15px;color:var(--text3);">⌄</span>
+          </span>
+        </div>
+        <div id="y-wish-body" style="display:none;margin-top:10px;"></div>
+      </div>
+    </div>
+
+    <div class="pad" style="margin-top:12px;">
+      <div class="card">
         <div class="eyebrow">Your cook</div>
         <div class="muted" style="margin-top:10px;" id="y-cook-summary"></div>
         <button style="width:100%;margin-top:12px;" onclick="openCookSettings()">Cook settings</button>
@@ -387,7 +411,7 @@
   const VISION_API = '/api/vision';
   const MODEL      = 'claude-sonnet-4-5';
   const SHEET_URL  = 'https://script.google.com/macros/s/AKfycbxXDdY5y_QUVIML1Zb4nwTnuryI_Uqhe-EGwc_iDT_s5OZ9wJNcfWvILo4rCC5bN6XT/exec';
-  const VERSION    = 'v2.1';
+  const VERSION    = 'v2.3';
   const POLL_MS    = 30000;
 
   // ══════════ STATE ══════════
@@ -467,6 +491,19 @@
       {year:'numeric',month:'2-digit',day:'2-digit',timeZone:'Asia/Kolkata'}).format(d);
   }
   function pad2(n){ return String(n).padStart(2,'0'); }
+  // What the clock thinks the next meal is. Cook next used this directly, which
+  // meant that at 9pm you could only ever plan dinner — the exact moment you are
+  // most likely to want to plan tomorrow's breakfast. activeSlot() is what the
+  // menu now runs on: the clock's guess unless the user has picked otherwise.
+  let slotOverride = null;
+  function activeSlot(){ return slotOverride || mealSlot(); }
+  function setSlot(sl){
+    slotOverride = (sl === mealSlot()) ? null : sl;
+    craving = '';           // a different meal is a fresh intent, like a craving
+    rejected = [];
+    pages = []; pageIdx = 0;
+    loadMenu(true);
+  }
   function mealSlot(){
     const h = istHour();
     if (h < 11) return 'breakfast';
@@ -540,11 +577,15 @@
     syncing = true;
     if (!silent) setSyncLabel('syncing…');
     try {
-      const [inv, ml, mac, prefs, wk, lib, skl] = await Promise.all([
+      const [inv, ml, mac, prefs, wk, lib, skl, wl] = await Promise.all([
         sheetGet('getInventory'), sheetGet('getMealLog'), sheetGet('getMacros'),
         sheetGet('getPreferences'), sheetGet('getWorkoutLog'),
-        sheetGet('getDishLibrary'), sheetGet('getCookSkills')
+        sheetGet('getDishLibrary'), sheetGet('getCookSkills'), sheetGet('getWishlist')
       ]);
+
+      // Guarded: an older Apps Script deployment answers "unknown action" here, and
+      // an undefined wishlist must not wipe the hearts already on screen.
+      if (wl && Array.isArray(wl.wishlist)) wishlist = wl.wishlist;
 
       // Two sources, one in-memory shape. Nutrition comes from the shared library
       // (identical for every household); what the cook can make and how well comes
@@ -636,12 +677,12 @@
     // A tab left open through the afternoon shouldn't still be suggesting breakfast.
     setInterval(()=>{
       if (document.visibilityState !== 'visible') return;
-      if (lastSlot && mealSlot() !== lastSlot) loadMenu(true);
+      if (!slotOverride && lastSlot && mealSlot() !== lastSlot) loadMenu(true);
     }, 60000);
     document.addEventListener('visibilitychange', ()=>{
       if (document.visibilityState==='visible'){
         syncAll(true);
-        if (lastSlot && mealSlot() !== lastSlot) loadMenu(true);
+        if (!slotOverride && lastSlot && mealSlot() !== lastSlot) loadMenu(true);
       }
     });
   }
@@ -701,6 +742,96 @@
     });
     return { p:Math.round(p), c:Math.round(c), f:Math.round(f), kcal:Math.round(kcal),
              fib:Math.round(fib), fibKnown, fibTotal, count:meals.length };
+  }
+
+  // ── What this meal has to do ──────────────────────────────────────────────
+  // The menu prompt knew each person's protein TARGET but never what they had
+  // already eaten, so a 9pm dinner was planned as if the day hadn't happened.
+  // These two helpers give it the gap to close, and only when the gap is real.
+  function slotIsToday(slot){
+    const at = { breakfast:8, lunch:13, snack:17, dinner:20 }[slot];
+    return at != null && istHour() < at;
+  }
+  // Per-person totals for today. estimateDay() is scoped to activePerson because
+  // it feeds the Today card; the menu is cooked for the whole house, so it needs
+  // this per person — the same class of bug the evening prep card had.
+  function eatenTodayBy(person){
+    const d = today();
+    return allMeals().filter(m => m.date === d && m.by === person);
+  }
+  function remainingFor(person){
+    const t = members[person] || BLANK;
+    let p=0, kcal=0;
+    eatenTodayBy(person).forEach(m=>{
+      const e = dishMacros[String(m.dish||'').toLowerCase()];
+      if (e){ p += e.p; kcal += e.kcal; }
+    });
+    return { p: Math.max(0, Math.round((t.protein||0) - p)),
+             kcal: Math.max(0, Math.round((t.cal||0) - kcal)),
+             eaten: eatenTodayBy(person).length };
+  }
+  // What a meal is FOR, which is not the same at 8am and 8pm. Kept short and
+  // directive; the numbers above carry the person-specific part.
+  const SLOT_SHAPE = {
+    breakfast: 'Breakfast: quick to make, light to moderate, and the protein anchor of the morning — eggs, besan chilla, paneer, curd, sprouts, dalia. No heavy gravies, nothing that takes an hour.',
+    lunch:     'Lunch: the fullest meal of the day. A dal or sabzi with roti/rice, carbohydrate-forward, enough to carry the afternoon.',
+    snack:     'Snack: small and light — a chaat, chilla, sprouts, fruit, chana. Not a third full meal, and it should not spoil dinner.',
+    dinner:    'Dinner: lighter than lunch and easy to digest at night. Protein-forward with fewer heavy carbohydrates; avoid anything very fried or very rich.'
+  };
+
+  // ══════════ WISHLIST ══════════
+  // "Make this sometime" — deliberately NOT a plan and NOT a log. It carries no
+  // date and no meal slot, because the whole point is that it's for whenever. It
+  // stays out of mealLog so it can never touch today's macros or the repeat rule.
+  let wishlist = [];
+  function wished(dish){
+    const k = String(dish||'').trim().toLowerCase();
+    return wishlist.some(w => String(w.dish||'').trim().toLowerCase() === k);
+  }
+  // Optimistic, like every other write in this app: the heart fills immediately and
+  // the Sheet catches up. A failed write is corrected by the next sync rather than
+  // blocking the tap.
+  async function toggleWish(dish){
+    const name = String(dish||'').trim();
+    if (!name) return;
+    const on = wished(name);
+    if (on){
+      wishlist = wishlist.filter(w => String(w.dish||'').trim().toLowerCase() !== name.toLowerCase());
+      toast('Removed from wishlist');
+    } else {
+      wishlist = [{ dish:name, addedBy:activePerson, addedAt:nowIST() }].concat(wishlist);
+      toast('Saved — ask her to make it sometime');
+    }
+    renderMenu(); renderWishlist();
+    try {
+      await sheetPost({ action: on ? 'removeWishlist' : 'addWishlist',
+                        dish:name, addedBy:activePerson });
+    } catch(e){ /* the next sync reconciles */ }
+  }
+
+  let wishOpen = false;
+  function toggleWishlist(){
+    wishOpen = !wishOpen;
+    const body  = document.getElementById('y-wish-body');
+    const caret = document.getElementById('y-wish-caret');
+    if (body)  body.style.display = wishOpen ? 'block' : 'none';
+    if (caret) caret.textContent  = wishOpen ? '⌃' : '⌄';
+  }
+
+  function renderWishlist(){
+    const cnt = document.getElementById('y-wish-count');
+    if (cnt) cnt.textContent = wishlist.length
+      ? wishlist.length + (wishlist.length===1 ? ' dish saved' : ' dishes saved')
+      : 'Nothing saved yet';
+    const box = document.getElementById('y-wish-body');
+    if (!box) return;
+    box.innerHTML = wishlist.length
+      ? wishlist.map(w=>`<div class="row" style="padding:9px 0;border-bottom:0.5px solid var(--border);">
+            <span>${esc(w.dish)}<span class="tiny" style="margin-left:7px;">${esc(w.addedBy||'')}</span></span>
+            <button class="btn-ghost" style="padding:4px 10px;min-height:0;color:var(--mirch);"
+              onclick="toggleWish(${jsAttr(w.dish)})" aria-label="Remove ${esc(w.dish)}">Remove</button>
+          </div>`).join('')
+      : `<div class="muted">Tap ♡ on any dish in Cook next to save it here. It's a list of things to ask her to make sometime — it doesn't schedule anything.</div>`;
   }
 
   // ══════════ COOK REPERTOIRE ══════════
@@ -852,11 +983,11 @@
             onclick="dismissPrep()" aria-label="Not tomorrow">&times;</button>
         </div>
         <button style="width:100%;margin-top:9px;padding:8px;min-height:0;font-size:13px;"
-          onclick='tellCookPrep(${JSON.stringify(items.map(i=>i.name))})'>Tell the cook tonight</button>
+          onclick='tellCookPrep(${jsAttr(items.map(i=>i.name))})'>Tell the cook tonight</button>
       </div>`;
     }
     // Otherwise: the most pressing prep among the dishes currently on the menu.
-    const left = hoursUntilSlot(lastSlot || mealSlot());
+    const left = hoursUntilSlot(lastSlot || activeSlot());
     const due = menu().map(m=>({ m, pr:prepFor(m) })).filter(x=>x.pr)
                       .sort((a,b)=>b.pr.hours - a.pr.hours)[0];
     if (!due) return '';
@@ -896,65 +1027,52 @@
   }
   function cap(s){ return s.charAt(0).toUpperCase()+s.slice(1); }
 
-  // One row per macro, each an honest fraction of its own target — the old
-  // stacked bar squeezed three macros into one 8px strip with arbitrary weights,
-  // which looked tidy and told you nothing. Calories lead because that's the
-  // number people actually read first.
-  function macroRow(label, got, target, colour, note){
-    const pct = Math.min(100, Math.round(got/(target||1)*100));
-    const over = got > target;
-    return `<div class="macro-row">
-      <div class="macro-head">
-        <span style="font-size:12px;color:var(--text2);">${label}</span>
-        <span class="mono" style="font-size:12px;color:${note?'var(--text3)':colour};">
-          ${note ? note : `${got}<span style="color:var(--text3);"> / ${target} g</span>`}
-        </span>
-      </div>
-      <div class="macro-track"><div class="macro-fill"
-        style="width:${pct}%;background:${over?'var(--mirch)':colour};"></div></div>
-    </div>`;
+  // ── The one-line day ───────────────────────────────────────────────────────
+  // Four metered rows became one line. The bar tracks CALORIES ONLY and nothing
+  // else: an earlier version blended protein/carbs/fat into a single strip with
+  // invented weights (0.4/0.35/0.25), which looked tidy and meant nothing, and was
+  // removed for exactly that reason. One bar can honestly show one quantity, so
+  // the macros sit beside it as figures instead — still every number that was
+  // there before, in about a fifth of the height.
+  function macroChip(label, got, target, colour, unknown){
+    const over = target && got > target;
+    return `<span style="white-space:nowrap;">
+      <span style="color:var(--text3);">${label}</span>
+      <span class="mono" style="color:${over?'var(--mirch)':colour};">${unknown ? '—' : got}</span><span
+        class="mono" style="color:var(--text3);">/${target}</span></span>`;
   }
 
   function renderMacroCard(t, got){
     const box = document.getElementById('t-macros');
     if (!box) return;
     const fibTarget = t.fiber || BLANK.fiber;
-    const missing = got.fibTotal - got.fibKnown;
-    // Three distinct states, and the row keeps the same shape in all of them so it
-    // never looks like fibre is broken or absent:
-    //   nothing logged   → 0 / target, exactly like every other macro
-    //   logged, no data  → — / target, because the target IS known, only intake isn't
-    //   some data        → a normal row, with a footnote naming what's still missing
-    const fibRow = !got.count
-      ? macroRow('Fibre', 0, fibTarget, 'var(--dhania)')
-      : got.fibKnown === 0
-      ? `<div class="macro-row">
-           <div class="macro-head">
-             <span style="font-size:12px;color:var(--text2);">Fibre</span>
-             <span class="mono" style="font-size:12px;color:var(--text3);">— / ${fibTarget} g</span>
-           </div>
-           <div class="macro-track"></div>
-         </div>`
-      : macroRow('Fibre', got.fib, fibTarget, 'var(--dhania)');
+    const missing   = got.fibTotal - got.fibKnown;
+    // Fibre keeps its three states, now expressed as "—" rather than a blank row:
+    // nothing logged → 0, logged but no data → —, some data → the figure. The
+    // target is always known, so the denominator never disappears.
+    const fibUnknown = !!got.count && got.fibKnown === 0;
+    const pct  = Math.min(100, Math.round(got.kcal / (t.cal || 1) * 100));
+    const over = got.kcal > (t.cal || 0);
 
     box.innerHTML = `
       <div class="row" style="align-items:baseline;">
-        <span style="display:flex;align-items:baseline;gap:7px;">
-          <span class="display" style="font-size:29px;font-weight:600;">${got.kcal.toLocaleString('en-IN')}</span>
-          <span class="mono" style="font-size:12px;color:var(--text3);">/ ${(t.cal||0).toLocaleString('en-IN')} kcal</span>
+        <span style="display:flex;align-items:baseline;gap:6px;">
+          <span class="display" style="font-size:22px;font-weight:600;line-height:1;">${got.kcal.toLocaleString('en-IN')}</span>
+          <span class="mono" style="font-size:11px;color:var(--text3);">/ ${(t.cal||0).toLocaleString('en-IN')} kcal</span>
         </span>
         <span class="eyebrow">${got.count ? got.count + (got.count===1?' meal':' meals') : 'nothing yet'}</span>
       </div>
-      <div style="margin-top:14px;">
-        ${macroRow('Protein', got.p, t.protein, 'var(--dhania)')}
-        ${macroRow('Carbs', got.c, t.carbs, 'var(--haldi)')}
-        ${macroRow('Fat', got.f, t.fat, 'var(--mirch)')}
-        ${fibRow}
+      <div class="macro-track" style="margin-top:7px;"><div class="macro-fill"
+        style="width:${pct}%;background:${over?'var(--mirch)':'var(--haldi)'};"></div></div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:7px;font-size:11px;">
+        ${macroChip('P', got.p, t.protein, 'var(--dhania)')}
+        ${macroChip('C', got.c, t.carbs, 'var(--haldi)')}
+        ${macroChip('F', got.f, t.fat, 'var(--mirch)')}
+        ${macroChip('Fib', got.fib, fibTarget, 'var(--dhania)', fibUnknown)}
       </div>
-      ${got.count && missing ? `<div class="tiny" style="margin-top:10px;">
-        ${got.fibKnown ? `Fibre missing for ${missing} of today's ${got.fibTotal} dishes`
-                       : `No fibre estimate yet for ${missing === 1 ? "today's dish" : `today's ${missing} dishes`}`}
-        — tap a dish in You → Dish database to fill it in, or it arrives when the dish is next estimated.</div>` : ''}`;
+      ${got.count && missing ? `<div class="tiny" style="margin-top:6px;line-height:1.4;">
+        ${got.fibKnown ? `Fibre missing for ${missing} of ${got.fibTotal} dishes`
+                       : `No fibre estimate yet for ${missing === 1 ? "today's dish" : `today's ${missing} dishes`}`}</div>` : ''}`;
   }
 
   // Logging is the thing you do least often, so it stays folded away until asked for.
@@ -988,7 +1106,7 @@
     box.innerHTML = dishes.map(d=>{
       const e = dishMacros[d.toLowerCase()];
       const sub = e ? ` <span class="mono" style="font-size:11px;color:var(--dhania)">${e.p}p</span>` : '';
-      return `<button class="chip" onclick="quickLog(${JSON.stringify(d).replace(/"/g,'&quot;')})">${esc(d)}${sub}</button>`;
+      return `<button class="chip" onclick="quickLog(${jsAttr(d)})">${esc(d)}${sub}</button>`;
     }).join('') + `<button class="chip" onclick="openLogSheet()" aria-label="Log something else">+</button>`;
   }
 
@@ -1122,7 +1240,7 @@
         <textarea id="lg-dish" placeholder="Rajma chawal with salad"></textarea>
         <div class="btn-row" style="margin-top:8px;">
           <button id="lg-mic" onclick="micTo('lg-dish','lg-mic')">Speak</button>
-          <button onclick="scanTo('lg-dish','dish')">Photo</button>
+          <button onclick="scanTo('lg-dish','dish')">Photo / upload</button>
         </div>
       </div>
       <div class="field">
@@ -1239,7 +1357,7 @@
     inventory.forEach(i=>{ const c = categorize(i.name); (groups[c]=groups[c]||[]).push(i); });
     const list = document.getElementById('k-list');
     if (!inventory.length){
-      list.innerHTML = `<div class="card"><div class="muted">Kitchen's empty. Add what you have above — speak it, snap a photo of the shelf, or type it.</div></div>`;
+      list.innerHTML = `<div class="card"><div class="muted">Kitchen's empty. Add what you have above — speak it, type it, or use a photo: snap the shelf, or upload a picture or an order screenshot from your gallery.</div></div>`;
       return;
     }
     // Grouped, but flat inside the one card — nested cards per category was the
@@ -1257,7 +1375,7 @@
             <span style="display:flex;align-items:center;gap:12px;flex:0 0 auto;">
               <span class="mono" style="font-size:13px;color:${low?'var(--mirch)':'var(--text2)'}">${esc(i.qty)}</span>
               <button class="btn-ghost" style="padding:2px 4px;min-height:0;font-size:15px;color:var(--text3);"
-                onclick="removeItem(${JSON.stringify(i.name).replace(/"/g,'&quot;')})" aria-label="Remove ${esc(i.name)}">&times;</button>
+                onclick="removeItem(${jsAttr(i.name)})" aria-label="Remove ${esc(i.name)}">&times;</button>
             </span>
           </div>`; }).join('') +
       `</div>`).join('');
@@ -1369,7 +1487,7 @@
           </div>`).join('')}
         <div class="btn-row" style="margin-top:16px;">
           <button onclick="closeSheet()">Skip</button>
-          <button class="btn-primary" onclick='applyDeduction(${JSON.stringify(r.map(x=>x.item)).replace(/'/g,"&#39;")})'>Update stock</button>
+          <button class="btn-primary" onclick='applyDeduction(${jsAttr(r.map(x=>x.item))})'>Update stock</button>
         </div>`);
     } catch(e){ /* deduction is a convenience — never block the log on it */ }
   }
@@ -1402,6 +1520,7 @@
 
     const byCat = {};
     items.forEach(i=>{ (byCat[i.cat||'Other'] = byCat[i.cat||'Other']||[]).push(i); });
+    lastShopList = byCat;
     const text = Object.entries(byCat).map(([c,list])=>
       c + '\n' + list.map(i=>'• ' + i.item + ' — ' + i.qty).join('\n')).join('\n\n');
 
@@ -1414,9 +1533,86 @@
             <span>${esc(i.item)}</span><span class="mono tiny">${esc(i.qty)}</span></div>`).join('')
       ).join('') + `</div>
       <div class="btn-row" style="margin-top:18px;">
-        <button onclick='copyText(${JSON.stringify(text)})'>Copy</button>
-        <button class="btn-primary" onclick='shareText(${JSON.stringify(text)},"Shopping list")'>Share</button>
-      </div>`);
+        <button onclick='copyText(${jsAttr(text)})'>Copy</button>
+        <button onclick='shareText(${jsAttr(text)},"Shopping list")'>Share</button>
+      </div>
+      <button class="btn-primary" style="width:100%;margin-top:8px;"
+        onclick="saveShopImage()">Save as image</button>`);
+  }
+
+  // One tap, straight to the camera roll / downloads — no share sheet. The list
+  // is read at a shop counter by whoever is doing the buying, so a picture in
+  // Photos beats a block of text in a chat thread. Drawn on a canvas rather than
+  // screenshotted so it stays legible: white ground, big rows, quantities right-
+  // aligned, and drawn at 2× for a retina screen.
+  // Held here rather than inlined into the button's onclick: an item name with an
+  // apostrophe ("Amul's butter") would close the attribute and break the button.
+  let lastShopList = null;
+  function saveShopImage(){
+    const byCat = lastShopList || {};
+    const cats = Object.keys(byCat);
+    if (!cats.length){ toast('Nothing on the list yet'); return; }
+    const W = 560, pad = 26, rowH = 34, catH = 40, headH = 78;
+    const rows = cats.reduce((a,c)=> a + byCat[c].length, 0);
+    const H = pad*2 + headH + cats.length*catH + rows*rowH;
+
+    const c = document.createElement('canvas');
+    c.width = W*2; c.height = H*2;
+    const ctx = c.getContext('2d');
+    ctx.scale(2,2);
+
+    ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle = '#B8791A'; ctx.fillRect(0,0,W,8);
+    ctx.fillStyle = '#1C1814'; ctx.font = '700 24px sans-serif';
+    ctx.fillText('Shopping list', pad, pad + 32);
+    ctx.fillStyle = '#8A8272'; ctx.font = '400 13px sans-serif';
+    ctx.fillText(new Date().toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'numeric' }),
+                 pad, pad + 54);
+
+    let y = pad + headH;
+    cats.forEach(cat=>{
+      ctx.fillStyle = '#F2EFE7'; ctx.fillRect(pad, y, W - pad*2, catH - 8);
+      ctx.fillStyle = '#6B6355'; ctx.font = '700 12px sans-serif';
+      ctx.fillText(String(cat).toUpperCase(), pad + 12, y + 21);
+      y += catH;
+      byCat[cat].forEach(it=>{
+        ctx.fillStyle = '#1C1814'; ctx.font = '400 16px sans-serif';
+        ctx.fillText(String(it.item), pad + 12, y + 21);
+        ctx.textAlign = 'right';
+        ctx.fillStyle = '#8A8272'; ctx.font = '400 14px sans-serif';
+        ctx.fillText(String(it.qty), W - pad - 12, y + 21);
+        ctx.textAlign = 'left';
+        ctx.strokeStyle = '#EDEAE1'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(pad + 12, y + rowH - 1); ctx.lineTo(W - pad - 12, y + rowH - 1); ctx.stroke();
+        y += rowH;
+      });
+    });
+
+    c.toBlob(blob=>{
+      if (!blob){ toast("Couldn't make the image"); return; }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'shopping-list-' + today() + '.png';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url), 4000);
+      toast('Image saved');
+    }, 'image/png');
+  }
+
+  // Embedding JSON in a single-quoted onclick attribute is a trap: one apostrophe
+  // in a dish or item name ("Amul's paneer", "Shepherd's pie") closes the attribute
+  // and the button silently stops working. The values here come from Claude, so
+  // apostrophes are not hypothetical. Escape & first, then the quote characters —
+  // the HTML parser decodes them back before the JS is parsed, so the call still
+  // receives the original string.
+  function jsAttr(v){
+    return JSON.stringify(v)
+      .replace(/&/g, '&amp;')
+      .replace(/'/g, '&#39;')
+      .replace(/"/g, '&quot;');
   }
 
   function copyText(t){
@@ -1435,6 +1631,37 @@
   let loadingMenu = false, lastSlot = null, lastMenuFor = null, craving = '';
 
   function menu(){ return pages[pageIdx] || []; }
+
+  // ── The repeat rule ──────────────────────────────────────────────────────
+  // A dish is off the menu for two days only when the WHOLE house ate it. The
+  // menu is cooked for everyone, so one person having had poha yesterday is no
+  // reason not to make poha for the house today — but if all three had it, it
+  // is. Enforced client-side as well as in the prompt, because a prompt is a
+  // request and this needs to be a guarantee. A craving overrides it: asking
+  // for rajma and being told nothing is worse than a repeat.
+  const REPEAT_BLOCK_DAYS = 2;
+  function blockedDishes(){
+    const roster = Object.keys(members);
+    if (!roster.length) return new Set();
+    // Built off today() (Asia/Kolkata) rather than toISOString(), which is UTC —
+    // between midnight and 05:30 IST those are different days and the window
+    // would silently slide by one.
+    const [Y,M,D] = today().split('-').map(Number);
+    const cut = new Date(Date.UTC(Y, M-1, D - REPEAT_BLOCK_DAYS));
+    const cutoffISO = cut.toISOString().slice(0,10);
+    const eaters = {};           // normalised dish → Set of people
+    allMeals().forEach(m => {
+      if (!m.dish || !m.date || m.date < cutoffISO) return;
+      const k = String(m.dish).trim().toLowerCase();
+      if (!k) return;
+      (eaters[k] = eaters[k] || new Set()).add(m.by);
+    });
+    const out = new Set();
+    Object.entries(eaters).forEach(([k, who]) => {
+      if (roster.every(n => who.has(n))) out.add(k);
+    });
+    return out;
+  }
 
   function otherMenu(){
     // Forward: if a next page already exists, just show it (free). Otherwise generate.
@@ -1457,15 +1684,15 @@
   async function loadMenu(force, newPage){
     if (loadingMenu) return;
     const others = Object.keys(members).length;
-    const key = mealSlot() + '|' + others + '|' + craving;
+    const key = activeSlot() + '|' + others + '|' + craving;
     if (!force && key === lastMenuFor && pages.length) return;
     loadingMenu = true;
     lastMenuFor = key;
-    lastSlot = mealSlot();
+    lastSlot = activeSlot();
     picked_ = new Set();
 
     const box = document.getElementById('t-cook');
-    box.innerHTML = `<div class="eyebrow" style="color:var(--haldi);">Cook next · ${mealSlot()}</div>
+    box.innerHTML = `<div class="eyebrow" style="color:var(--haldi);">Cook next · ${activeSlot()}</div>
       <div class="muted" style="margin-top:10px;">${craving?`Finding ${esc(craving)} ideas`:'Building the menu'}<span class="dots"></span></div>`;
 
     // Give Claude each person's likes/dislikes/favourites AND how well the cook
@@ -1476,7 +1703,9 @@
     const wellMade = Object.entries(dishMacros).filter(([,m])=>m.rating==='favourite').map(([k])=>cap(k));
     const poorlyMade = Object.entries(dishMacros).filter(([,m])=>m.rating==='avoid').map(([k])=>cap(k));
     const cantMake = Object.entries(dishMacros).filter(([,m])=>m.knows==='no').map(([k])=>cap(k));
+    const slot = activeSlot();
     const known = repertoire(25);
+    const blocked = blockedDishes();
 
     // How far outside her repertoire the menu may wander. Left at "mostly
     // familiar" this keeps the menu boring in the good way — food the household
@@ -1492,9 +1721,21 @@
 
     try {
       const r = await askJSON(
-        `Plan a ${mealSlot()} menu for an Indian household of ${others} in Delhi. A domestic cook makes the food.\n${roster}\n` +
+        `Plan a ${slot} menu for an Indian household of ${others} in Delhi. A domestic cook makes the food.\n${roster}\n` +
+        `\n${SLOT_SHAPE[slot] || ''}\n` +
+        (slotIsToday(slot)
+          ? `This is TODAY's ${slot}, and part of the day is already eaten. Left to hit before bed — the menu should close these gaps, not ignore them:\n` +
+            Object.keys(members).map(n=>{
+              const rem = remainingFor(n);
+              return `  ${n}: ${rem.p} g protein and ${rem.kcal} kcal still to go` +
+                     (rem.eaten ? '' : ' (nothing logged yet today)');
+            }).join('\n') + '\n'
+          : `This is being planned AHEAD — it is the next ${slot}, not today's remaining food, so plan it as a normal ${slot} carrying its usual share of the day's targets rather than trying to close today's gaps.\n`) +
         `In the kitchen: ${inventory.map(i=>i.name+' ('+i.qty+')').join(', ') || 'not much'}.\n` +
         `Recently eaten (avoid repeating): ${allMeals().slice(0,8).map(m=>m.dish).join(', ') || 'nothing'}.\n` +
+        (blocked.size && !craving
+          ? `The whole household ate these in the last ${REPEAT_BLOCK_DAYS} days — they are BANNED, do not suggest them in any form: ${[...blocked].map(cap).join(', ')}.\n`
+          : '') +
         (known.length ? `Dishes the cook already makes — draw from these first: ${known.join(', ')}.\n` : '') +
         (wellMade.length ? `The cook makes these especially well — prefer them: ${wellMade.join(', ')}.\n` : '') +
         (poorlyMade.length ? `The cook makes these poorly — avoid or only if nothing better: ${poorlyMade.join(', ')}.\n` : '') +
@@ -1507,7 +1748,7 @@
         `Never invent a name, never fuse cuisines, never suggest a restaurant, cafe or foreign dish, and never dress up a plain dish with an adjective it doesn't have.\n` +
         `3. Nothing needing a special appliance, an unusual ingredient, or a technique a home cook wouldn't already use.\n` +
         `4. ${advRule}\n\n` +
-        `Give 4 to 5 ${mealSlot()==='breakfast'?'quick ':''}dish options. Some suit everyone, some suit only certain people based on diets and dislikes.\n` +
+        `Give 4 to 5 ${slot==='breakfast'?'quick ':''}dish options. Some suit everyone, some suit only certain people based on diets and dislikes.\n` +
         `For each dish also add "hints": an object mapping each person's name to a SHORT tag of at most 4 words ` +
         `saying how much they'd like it, e.g. "You'll love this", "Might be too spicy", "Not their thing". Only ` +
         `include names who have a notable reaction.\n` +
@@ -1518,13 +1759,19 @@
         `marinating or fermenting (e.g. "Soak the rajma overnight") and an empty string if it needs none, ` +
         `"prepHours" is how many hours before cooking that preparation must start (0 if none), and ` +
         `"common" is true only if this is a standard everyday dish nearly every Indian home cook already knows.`, 1500);
-      const newMenu = (Array.isArray(r) ? r : []).map(x=>({
+      let newMenu = (Array.isArray(r) ? r : []).map(x=>({
         dish:x.dish, for:Array.isArray(x.for)?x.for:[activePerson],
         why:x.why||'', protein:+x.protein||0, missing:x.missing||[],
         hints:x.hints&&typeof x.hints==='object'?x.hints:{}, details:null,
         prep:x.prep||'', prepHours:+x.prepHours||0, common:x.common !== false
       }));
       if (!newMenu.length) throw new Error('empty menu');
+      // The prompt asks; this enforces. Skipped when a craving is on, and never
+      // allowed to leave an empty menu — a blank card is worse than a repeat.
+      if (blocked.size && !craving){
+        const kept = newMenu.filter(m => !blocked.has(String(m.dish||'').trim().toLowerCase()));
+        if (kept.length) newMenu = kept;
+      }
       // Prep requirements and "is this ordinary home cooking" are facts about the
       // dish, not about this household, so they go to the shared library. Only
       // written when they're new, so this costs nothing on a warm library.
@@ -1579,7 +1826,7 @@
     const box = document.getElementById('t-cook');
     const cur = menu();
     if (!cur.length){
-      box.innerHTML = `<div class="eyebrow" style="color:var(--haldi);">Cook next · ${mealSlot()}</div>
+      box.innerHTML = `<div class="eyebrow" style="color:var(--haldi);">Cook next · ${activeSlot()}</div>
         <div class="muted" style="margin-top:10px;">That's the menu done. Want fresh ideas?</div>
         <button style="width:100%;margin-top:12px;" onclick="loadMenu(true)">Show more dishes</button>`;
       return;
@@ -1613,6 +1860,11 @@
                 <span class="display" style="font-weight:500;font-size:16px;">${esc(m.dish)}</span>
                 <span style="display:flex;align-items:center;gap:9px;">
                   <span class="mono" style="font-size:12px;color:var(--dhania);">${m.protein?m.protein+'p':''}</span>
+                  <button class="btn-ghost" style="padding:2px 5px;min-height:0;font-size:15px;line-height:1;
+                    color:${wished(m.dish)?'var(--mirch)':'var(--text3)'};"
+                    onclick="event.stopPropagation();toggleWish(${jsAttr(m.dish)})"
+                    aria-pressed="${wished(m.dish)}"
+                    aria-label="${wished(m.dish)?'Remove':'Save'} ${esc(m.dish)} ${wished(m.dish)?'from':'to'} wishlist">${wished(m.dish)?'♥':'♡'}</button>
                   <button class="btn-ghost" style="padding:2px 6px;min-height:0;font-size:15px;"
                     onclick="event.stopPropagation();expandDish(${i})" aria-label="About ${esc(m.dish)}">${expanded?'▾':'ⓘ'}</button>
                 </span>
@@ -1628,10 +1880,16 @@
     const n = picked_.size;
     box.innerHTML = `
       <div class="row">
-        <span class="eyebrow" style="color:var(--haldi);">Cook next · ${mealSlot()}${craving?' · '+esc(craving):''}</span>
+        <span class="eyebrow" style="color:var(--haldi);">Cook next${craving?' · '+esc(craving):''}</span>
         <button class="btn-ghost" style="padding:5px 11px;min-height:0;font-size:12px;
           border:0.5px solid var(--border);border-radius:99px;" onclick="surpriseMenu()">Try something new</button>
       </div>
+      <div class="chips" style="margin-top:8px;gap:6px;">
+        ${['breakfast','lunch','snack','dinner'].map(sl=>
+          `<button class="chip ${sl===activeSlot()?'on':''}" style="padding:5px 11px;font-size:12px;"
+             onclick="setSlot(${jsAttr(sl)})">${cap(sl)}</button>`).join('')}
+      </div>
+      ${slotOverride ? `<div class="tiny" style="margin-top:6px;">Planning ${slotIsToday(slotOverride)?'today\'s':'the next'} ${esc(slotOverride)} rather than ${esc(mealSlot())}.</div>` : ''}
       ${prepStrip()}
       <div style="margin-top:6px;">${rows}</div>
 
@@ -1722,16 +1980,16 @@
         <label>When</label>
         <div class="chips" id="lm-slot">
           ${['breakfast','lunch','snack','dinner'].map(s=>
-            `<button class="chip ${s===mealSlot()?'on':''}" onclick="pickOne(this)" data-v="${s}">${cap(s)}</button>`).join('')}
+            `<button class="chip ${s===activeSlot()?'on':''}" onclick="pickOne(this)" data-v="${s}">${cap(s)}</button>`).join('')}
         </div>
       </div>
-      <button class="btn-primary" style="width:100%;" onclick='commitMenuLog(${JSON.stringify(dishes.map(d=>d.dish))})'>
+      <button class="btn-primary" style="width:100%;" onclick='commitMenuLog(${jsAttr(dishes.map(d=>d.dish))})'>
         Log ${dishes.length>1?'all':'it'}
       </button>`);
   }
 
   async function commitMenuLog(dishNames){
-    const type = picked('lm-slot') || mealSlot();
+    const type = picked('lm-slot') || activeSlot();
     const loggedDishes = [];
     for (let di=0; di<dishNames.length; di++){
       const el = document.getElementById('lm-'+di);
@@ -1780,7 +2038,7 @@
         </div>`).join('')}
       <div class="btn-row">
         <button onclick="skipRating()">Skip</button>
-        <button class="btn-primary" onclick='saveRatings(${JSON.stringify(dishes)})'>Save ratings</button>
+        <button class="btn-primary" onclick='saveRatings(${jsAttr(dishes)})'>Save ratings</button>
       </div>`);
   }
 
@@ -1844,7 +2102,7 @@
     const lang = LANGS[settings.cookLang] || LANGS.hi;
 
     // Build a plain fallback order immediately, so the sheet is never empty.
-    let title = mealSlot()==='breakfast' ? 'नाश्ता' : mealSlot()==='lunch' ? 'खाना' : 'खाना';
+    let title = activeSlot()==='breakfast' ? 'नाश्ता' : activeSlot()==='lunch' ? 'खाना' : 'खाना';
     orderLines = dishes.map(d => {
       const pr = prepFor(d);
       return `${d.dish} — ${portionText(d)}` + (pr ? ` (${pr.note})` : '');
@@ -1858,7 +2116,7 @@
         return `${d.dish} for ${d.for.length} (${whoLabel(d.for)})` + (pr ? ` [advance prep: ${pr.note}]` : '');
       }).join('; ');
       const r = await askJSON(
-        `A home cook in India who speaks ${lang.name} needs a short spoken order for ${mealSlot()}: ${list}.\n` +
+        `A home cook in India who speaks ${lang.name} needs a short spoken order for ${activeSlot()}: ${list}.\n` +
         `Do NOT give cooking instructions or methods — she knows how to cook. Only say WHAT to make and HOW MUCH.\n` +
         `One line per dish: dish name, then portion as a number of people or units, using digits ` +
         `(3 logon ke liye, 4 ande). If a dish is only for some people, name them. Everyday spoken ${lang.name}.\n` +
@@ -1908,13 +2166,13 @@
             ${esc(unknown.map(d=>d.dish).join(', '))} — you can have the method read out to her
             in ${esc(lang.name)} instead of explaining it yourself.</div>
           ${unknown.map(d=>`<button style="width:100%;margin-top:10px;"
-            onclick='teachDish(${JSON.stringify(d.dish)})'>How to make ${esc(d.dish)}</button>`).join('')}
+            onclick='teachDish(${jsAttr(d.dish)})'>How to make ${esc(d.dish)}</button>`).join('')}
         </div>` : ''}
 
       <div class="divider"></div>
       <div class="btn-row">
-        <button onclick='shareCard(${JSON.stringify(title)})'>Send as card</button>
-        <button onclick='copyText(${JSON.stringify(title + "\n" + orderLines.map(l=>"• "+l).join("\n"))})'>Copy</button>
+        <button onclick='shareCard(${jsAttr(title)})'>Send as card</button>
+        <button onclick='copyText(${jsAttr(title + "\n" + orderLines.map(l=>"• "+l).join("\n"))})'>Copy</button>
       </div>
       <button class="btn-primary" style="width:100%;margin-top:10px;" onclick="logMenu()">Cooked it — log now</button>
       <div class="tiny" style="margin-top:10px;">
@@ -2091,7 +2349,7 @@
   // ══════════ TRAIN ══════════
   function renderTrain(){
     document.getElementById('w-who').innerHTML = Object.keys(members).map(n=>
-      `<button class="chip ${n===activePerson?'on':''}" onclick="setPerson(${JSON.stringify(n).replace(/"/g,'&quot;')})">${esc(n)}</button>`).join('');
+      `<button class="chip ${n===activePerson?'on':''}" onclick="setPerson(${jsAttr(n)})">${esc(n)}</button>`).join('');
 
     const t = today();
     const mine = workoutLog.filter(w=>w.by===activePerson);
@@ -2194,24 +2452,59 @@
   // taskType and response shape must match the deployed /api/vision function:
   // 'inventory-photo' returns {items:[{name,quantity}]}, 'dish-recognition'
   // returns {dish_name, components, protein, calories, ...}.
+  // Claude's vision API accepts jpeg/png/gif/webp only, and caps image size.
+  // A gallery original can be 12 MB and an iPhone one can be HEIC, so everything
+  // is re-encoded through a canvas to a modest JPEG before it leaves the phone.
+  // That normalises png/jpg/jpeg/webp/screenshots to one format, and means the
+  // upload is ~200 KB instead of megabytes. If the browser can't decode the file
+  // at all (HEIC on desktop Chrome), we say so plainly rather than fail obscurely.
+  const VISION_MAX_PX = 1568;   // Claude downsamples past this anyway
+  function toJpegBase64(file){
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        const scale = Math.min(1, VISION_MAX_PX / Math.max(img.width, img.height));
+        const w = Math.max(1, Math.round(img.width * scale));
+        const h = Math.max(1, Math.round(img.height * scale));
+        const c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        const ctx = c.getContext('2d');
+        ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, 0, w, h);   // flatten transparent PNGs
+        ctx.drawImage(img, 0, 0, w, h);
+        try { resolve(c.toDataURL('image/jpeg', 0.85).split(',')[1]); }
+        catch(e){ reject(e); }
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('decode')); };
+      img.src = url;
+    });
+  }
+
   function scanTo(targetId, kind){
     const task = kind === 'dish' ? 'dish-recognition' : 'inventory-photo';
     const input = document.createElement('input');
-    input.type = 'file'; input.accept = 'image/*'; input.capture = 'environment';
+    // No `capture` attribute — that forced the camera and hid the gallery, which
+    // made it impossible to upload an existing photo or an order screenshot.
+    // Without it the OS picker offers both Take Photo and Photo Library.
+    input.type = 'file';
+    input.accept = 'image/*,.heic,.heif';   // some Android pickers hide HEIC without the extensions
     input.onchange = async () => {
       const file = input.files[0];
       if (!file) return;
       toast('Reading the photo…');
-      const b64 = await new Promise((res,rej)=>{
-        const r = new FileReader();
-        r.onload = ()=> res(r.result.split(',')[1]);
-        r.onerror = rej;
-        r.readAsDataURL(file);
-      });
+      let b64;
+      try { b64 = await toJpegBase64(file); }
+      catch(e){
+        toast(/hei[cf]/i.test(file.type + file.name)
+          ? "That's an iPhone HEIC photo this browser can't open — share it as JPEG first"
+          : "Couldn't open that image");
+        return;
+      }
       try {
         const r = await fetch(VISION_API, {
           method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({ imageBase64:b64, imageType:file.type, taskType:task })
+          body: JSON.stringify({ imageBase64:b64, imageType:'image/jpeg', taskType:task })
         });
         const res = await r.json();
         if (res.error) throw new Error(res.error);
@@ -2268,7 +2561,7 @@
   function renderYou(){
     const p = me();
     document.getElementById('y-who').innerHTML = Object.keys(members).map(n=>
-      `<button class="chip ${n===activePerson?'on':''}" onclick="setPerson(${JSON.stringify(n).replace(/"/g,'&quot;')})">${esc(n)}</button>`).join('');
+      `<button class="chip ${n===activePerson?'on':''}" onclick="setPerson(${jsAttr(n)})">${esc(n)}</button>`).join('');
 
     document.getElementById('y-targets').innerHTML = [
       ['Calories', p.cal, 'kcal'], ['Protein', p.protein, 'g'],
@@ -2301,9 +2594,10 @@
       `<div class="row" style="padding:9px 0;border-bottom:0.5px solid var(--border);">
         <span>${esc(n)}${n===activePerson?' <span class="tiny">(you)</span>':''}</span>
         <button class="btn-ghost" style="padding:4px 10px;min-height:0;color:var(--mirch);"
-          onclick="removeMember(${JSON.stringify(n).replace(/"/g,'&quot;')})">Remove</button>
+          onclick="removeMember(${jsAttr(n)})">Remove</button>
       </div>`).join('');
 
+    renderWishlist();
     document.getElementById('y-version').textContent = 'Nutrition OS ' + VERSION;
   }
 
@@ -2419,7 +2713,7 @@
         : m.rating==='avoid' ? ` · <span class="tiny" style="color:var(--mirch);">△ avoid</span>`
         : m.rating==='fine' ? ` · <span class="tiny" style="color:var(--text3);">fine</span>` : '';
       return `<div class="row" style="padding:11px 0;border-bottom:0.5px solid var(--border);cursor:pointer;"
-                onclick="editDish(${JSON.stringify(key).replace(/"/g,'&quot;')})">
+                onclick="editDish(${jsAttr(key)})">
           <div><div>${esc(cap(key))}</div>${badge}${rate}</div>
           <span class="mono tiny">${m.kcal} kcal · ${m.p}p</span>
         </div>`;
@@ -2446,7 +2740,7 @@
         `<div class="field"><label for="ed-${k}">${l} (${u})</label>
           <input class="mono" type="number" id="ed-${k}" value="${m[k]==null?'':m[k]}"
             ${k==='fib'&&m.fib==null?'placeholder="not estimated yet"':''}></div>`).join('')}
-      <button class="btn-primary" style="width:100%;" onclick="saveDish(${JSON.stringify(key).replace(/"/g,'&quot;')})">
+      <button class="btn-primary" style="width:100%;" onclick="saveDish(${jsAttr(key)})">
         Save as confirmed
       </button>`);
   }
@@ -2647,7 +2941,7 @@
         <h1>Who's using this?</h1>
         <p class="muted" style="margin:10px 0 22px;">Everything gets tracked per person, so start with you.</p>
         ${existing.length ? `<div class="chips" style="margin-bottom:16px;">
-          ${existing.map(n=>`<button class="chip" onclick="pickExisting(${JSON.stringify(n).replace(/"/g,'&quot;')})">${esc(n)}</button>`).join('')}
+          ${existing.map(n=>`<button class="chip" onclick="pickExisting(${jsAttr(n)})">${esc(n)}</button>`).join('')}
         </div><div class="tiny" style="margin-bottom:20px;">Or add yourself:</div>` : ''}
         <div class="field"><input id="ob-name" placeholder="Your name" value="${esc(onbData.name)}"></div>
         <button class="btn-primary" style="width:100%;" onclick="onbNext()">Continue</button>`;
@@ -2783,11 +3077,11 @@
   // ══════════ HELP ══════════
   const HELP = [
     ['Today', 'Your day at a glance. The bar across the top fills as you eat — green is protein, yellow carbs, red fat. Tap any dish under "Log a meal" to log it in one tap; those are your own most-eaten dishes, so the list gets more useful the more you use it.'],
-    ['Cook next', 'A menu of 4–5 dishes for the current meal, each tagged with who it suits and a short hint on whether you\'ll like it, based on your preferences. Tap ⓘ on any dish to see what it is, the portion, and how to serve it (mixed or separate). "More ›" gives another page of ideas; "‹ Back" returns to earlier pages for free. Type a craving like "rajma" in the box to get rajma-based options.'],
+    ['Cook next', 'A menu of 4–5 dishes for the current meal, each tagged with who it suits and a short hint on whether you\'ll like it, based on your preferences. Tap ⓘ on any dish to see what it is, the portion, and how to serve it (mixed or separate). "More ›" gives another page of ideas; "‹ Back" returns to earlier pages for free. Type a craving like "rajma" in the box to get rajma-based options. The four chips at the top switch which meal you\'re planning — tap Breakfast at night and you get tomorrow\'s breakfast instead of tonight\'s dinner, and the suggestions change shape accordingly (breakfast quick and protein-led, lunch fullest, dinner lighter). When the meal is still ahead of you today, the menu also knows how much protein and how many calories each person has left to hit. Tap ♡ on any dish to save it to your Wishlist in You — that\'s a "ask her to make this sometime" list, not a schedule. Anything the whole house ate in the last two days is kept off the menu — if only one person had it, it can still come up, because the pot is cooked for everyone. Typing a craving overrides that.'],
     ['Rating the cook', 'After a home-cooked meal, rate how well the cook made each dish — favourite, fine, or poorly made. Favourites get suggested more often and show a "cook makes this well" tag; poorly-made dishes get flagged and pushed down. This builds up per dish across the whole household.'],
     ['Cooking for the whole house', 'Tick more than one dish and "Tell cook" bundles them into a single ordered set of spoken instructions, so the cook hears the whole meal in one pass with quantities scaled to how many people each dish is for. When you log, each dish comes pre-filled with who it was for — tap any name to correct who actually ate it.'],
     ['Telling the cook', 'Tap "Tell cook" and the instructions get translated into her language, then read aloud. Use "Play all" if she\'s working while listening, or the one-step-at-a-time controls if she wants to go at her own pace. Quantities are always spoken as numbers, which is easier to follow than written words. If she isn\'t there, "Send as card" makes an image you can send on WhatsApp.'],
-    ['Kitchen', 'What you have and what\'s running low, in one place. Add stock by speaking it, photographing the shelf, or typing. Anything under half a kilo, half a litre, or 250 grams gets flagged as low automatically.'],
+    ['Kitchen', 'What you have and what\'s running low, in one place. Add stock by speaking it, typing it, or tapping Photo / upload — that opens the camera AND the gallery, so you can snap the shelf, pick an existing picture, or feed it a Blinkit/Zepto order screenshot and it will read the items off it. Anything under half a kilo, half a litre, or 250 grams gets flagged as low automatically. The shopping list has a one-tap Save as image if you would rather carry a picture to the shop.'],
     ['After cooking', 'When you log a home-cooked meal, the app guesses what got used up and asks before changing anything. Edit any number that looks wrong, or skip it entirely.'],
     ['Train', 'Type or say your sets in plain language — "bench press 3x10 60kg" works. Check what it read back before logging.'],
     ['You', 'Targets, food preferences, cook language, and who else is in the house. If a suggestion keeps missing, your preferences are usually the thing to fix.'],
