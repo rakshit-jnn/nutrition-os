@@ -435,7 +435,7 @@
   const VISION_API = '/api/vision';
   const MODEL      = 'claude-sonnet-4-5';
   const SHEET_URL  = 'https://script.google.com/macros/s/AKfycbxXDdY5y_QUVIML1Zb4nwTnuryI_Uqhe-EGwc_iDT_s5OZ9wJNcfWvILo4rCC5bN6XT/exec';
-  const VERSION    = 'v2.5';
+  const VERSION    = 'v2.8';
   const POLL_MS    = 30000;
 
   // ══════════ STATE ══════════
@@ -449,7 +449,7 @@
   // 2 = happy to try new ones. prepDismissed holds the date the evening
   // soak-reminder was last dismissed, so it doesn't nag twice in one night.
   let settings     = { cookLang:'hi', cookName:'', cookPhone:'', lowThresholds:{},
-                       adventure:1, prepDismissed:'', planPromptedOn:'' };
+                       adventure:1, prepDismissed:'', planPromptedOn:'', ratePromptedOn:'' };
   let pendingSets  = null;
   let screen       = 'today';
   // The Menu: dishes that have been finalised, one row per person per dish, shared
@@ -511,6 +511,20 @@
   // "30/7/2026, 2:32:15 pm" — but if the cell is date-formatted, Apps Script
   // serialises it as ISO instead. Both shapes have to normalise to YYYY-MM-DD,
   // or nothing ever matches today() and the whole day view reads as empty.
+  // toISODate() slices the first ten characters of anything ISO-shaped, which is right
+  // for the plain dates the sheets hold — but wrong for a full timestamp that crossed
+  // the wire as a Date, because UTC midnight-to-5:30am is the *previous* day in IST.
+  // Menu dates decide which day a meal belongs to, so they resolve in IST explicitly.
+  function menuDay(v){
+    const s = String(v || '');
+    if (/^\d{4}-\d{2}-\d{2}T/.test(s)){
+      const d = new Date(s);
+      return isNaN(d) ? '' : new Intl.DateTimeFormat('en-CA',
+        {year:'numeric',month:'2-digit',day:'2-digit',timeZone:'Asia/Kolkata'}).format(d);
+    }
+    return toISODate(v);
+  }
+
   function toISODate(v){
     if (!v) return '';
     const s = String(v);
@@ -622,14 +636,21 @@
       // Same guard as the wishlist: an Apps Script still on the previous version
       // answers "unknown action", and an undefined menu must not blank the card.
       if (mn && Array.isArray(mn.menu)){
-        menuBoard = mn.menu;
+        // Normalise defensively. The backend now sends clean YYYY-MM-DD, but a Sheet
+        // date that slipped through as a Date object would serialise in UTC and read
+        // as the previous day at IST midnight — which silently empties the whole board.
+        menuBoard = mn.menu.map(m => Object.assign({}, m, {
+          date: menuDay(m.date), slot: String(m.slot||'').trim().toLowerCase() }));
         menuBackendMissing = false;
       } else if (mn && /unknown action/i.test(String(mn.error||''))){
         menuBackendMissing = true;
       }
       if (pl && Array.isArray(pl.plans)){
         mealPlans = {};
-        pl.plans.forEach(p => { mealPlans[p.person] = p; });
+        pl.plans.forEach(p => {
+          mealPlans[p.person] = Object.assign({}, p, {
+            startDate: p.startDate ? menuDay(p.startDate) : '' });
+        });
       }
 
       // Guarded: an older Apps Script deployment answers "unknown action" here, and
@@ -695,6 +716,9 @@
           if (r.likes) p.likes = r.likes;
           if (r.dislikes) p.dislikes = r.dislikes;
           if (r.allergies) p.allergies = r.allergies;
+          // Guarded: an older backend has no Picks column, and an undefined must not
+          // wipe the taste already on screen.
+          if (r.picks && typeof r.picks === 'object') p.picks = r.picks;
           // Guard against the legacy six-column Preferences row, where UpdatedAt
           // landed in the Favourites slot. The backend repairs the sheet; this
           // stops a stale localStorage copy showing a date as someone's favourite.
@@ -1081,7 +1105,7 @@
         <div style="margin-bottom:18px;">
           <div style="font-weight:600;margin-bottom:8px;">${esc(d.dish)}</div>
           <div class="chips" id="am-${di}">
-            ${everyone.map(n=>`<button class="chip ${d.for.includes(n)?'on':''}"
+            ${everyone.map(n=>`<button class="chip ${n===activePerson?'on':''}"
               onclick="toggleChip(this)" data-v="${esc(n)}">${esc(n)}</button>`).join('')}
           </div>
         </div>`).join('')}
@@ -1124,6 +1148,257 @@
     }
     toast(dishNames.length>1 ? `${dishNames.length} dishes on the menu` : 'On the menu');
     syncAll(true);
+  }
+
+  // ══════════ TASTE UNIVERSE ══════════
+  // The seed list. Fixed and local because it must work on day one, cost nothing, and
+  // be the same for everyone — Claude only ever *extends* it, never reproduces it, which
+  // is the whole reason expansion is affordable. Everyday North Indian household food,
+  // named the way this house would say it, not the way a menu would print it.
+  const TASTE_SEED = {
+    dish: [
+      'Rajma Chawal','Chhole','Kadhi Chawal','Dal Makhani','Dal Tadka','Dal Fry',
+      'Palak Paneer','Paneer Bhurji','Matar Paneer','Kadhai Paneer','Shahi Paneer',
+      'Aloo Gobi','Bhindi Masala','Baingan Bharta','Sarson ka Saag','Lauki Sabzi',
+      'Aloo Matar','Jeera Aloo','Dum Aloo','Mix Veg','Chana Masala','Kala Chana',
+      'Khichdi','Dalia','Poha','Upma','Besan Chilla','Moong Chilla','Suji Cheela',
+      'Aloo Paratha','Paneer Paratha','Gobi Paratha','Methi Paratha','Thepla',
+      'Idli','Dosa','Uttapam','Sambar','Rasam','Curd Rice','Veg Pulao','Jeera Rice',
+      'Chole Bhature','Puri Sabzi','Pav Bhaji','Rajma','Lobia','Soya Chunks Curry',
+      'Soya Keema','Egg Curry','Egg Bhurji','Boiled Eggs','Omelette','Anda Paratha',
+      'Chicken Curry','Butter Chicken','Chicken Tikka','Chicken Biryani','Fish Curry',
+      'Keema Matar','Malai Kofta','Veg Biryani','Sprouts Chaat','Dahi Bhalla'
+    ],
+    ingredient: [
+      'Paneer','Tofu','Soya chunks','Eggs','Chicken','Fish','Curd','Milk','Ghee',
+      'Chana','Moong dal','Masoor dal','Toor dal','Urad dal',
+      'Rajma (dry)','Lobia (dry)','Kala chana (dry)',
+      'Palak','Methi','Bhindi','Lauki','Karela','Baingan','Gobi','Aloo','Matar',
+      'Mushroom','Shimla mirch','Sweet corn','Tamatar','Pyaz','Gajar',
+      'Rice','Atta / roti','Oats','Sabudana','Peanuts','Almonds','Makhana','Sprouts',
+      'Coconut','Til','Butter'
+    ],
+    style: [
+      'Light dinners','High protein','Low oil','No fried food','More fibre',
+      'Less spicy','More spicy','Home-style simple','Quick to make','Gravy dishes',
+      'Dry sabzis','No onion garlic','Jain food','More salad','Less rice','More roti',
+      'One-pot meals','Seasonal vegetables','Sunday-special food','Same food as everyone'
+    ]
+  };
+  const TASTE_MAX = 50;          // his ceiling — past this, picking stops being a signal
+  const TASTE_EXPAND_MAX = 12;   // per session, so a tapping spree can't run up a bill
+
+  // ══════════ THE TASTE PICKER ══════════
+  // Recognition over recall, applied to the one screen that had resisted it: preferences
+  // were free text, which asks you to compose your own taste from memory. Tapping what
+  // you already recognise is both easier and better data — "Rajma Chawal" is a dish the
+  // menu can match on, "i like homely food" is not.
+  //
+  // The Spotify part is the reward loop: liking something produces more like it. Only
+  // *likes* expand (an avoid tells us where not to look, which is cheap to honour and
+  // pointless to explore), expansion is debounced so a tapping spree is one call rather
+  // than six, and Claude is told the entire seed list as an exclusion — it only ever
+  // adds what the fixed list doesn't already have, which is what keeps this affordable.
+  let taste = { like:[], avoid:[], style:[] };
+  let tasteDiscovered = [];      // what expansion has produced this session
+  let tasteTab = 'dish';
+  let tasteExpansions = 0;
+  let tasteTimer = null, tasteBusy = false;
+
+  function tasteFor(person){
+    const p = members[person] || {};
+    const t = p.picks && typeof p.picks === 'object' ? p.picks : {};
+    return { like:t.like||[], avoid:t.avoid||[], style:t.style||[] };
+  }
+  function tasteCount(){ return taste.like.length + taste.avoid.length + taste.style.length; }
+  function tasteState(item){
+    if (taste.like.includes(item) || taste.style.includes(item)) return 'like';
+    if (taste.avoid.includes(item)) return 'avoid';
+    return '';
+  }
+
+  // The rail is never empty on first open: it starts from what this household already
+  // eats but nobody has picked. Free, real, and it means the reward loop is visible
+  // before a single call is made. On a genuinely fresh install it's simply empty.
+  function seedTasteRail(){
+    const known = {};
+    allMeals().forEach(m => { const k=String(m.dish||'').trim(); if(k) known[k]=(known[k]||0)+1; });
+    tasteDiscovered = Object.entries(known).sort((a,b)=>b[1]-a[1]).map(e=>e[0])
+      .filter(d => !TASTE_SEED.dish.includes(d) && !tasteState(d)).slice(0,6)
+      .map(d => ({ name:d, kind:'dish' }));
+  }
+
+  function openTastePicker(){
+    taste = JSON.parse(JSON.stringify(tasteFor(activePerson)));
+    tasteDiscovered = [];
+    tasteExpansions = 0;
+    tasteTab = 'dish';
+    seedTasteRail();
+    renderTastePicker();
+  }
+
+  // The chip grid itself, with no wrapper. Shared verbatim by the You sheet and the
+  // onboarding step, because a picker that behaves differently in onboarding is how
+  // you end up with two of them.
+  function tasteMarkup(){
+    const kindLabel = { dish:'Dishes', ingredient:'Ingredients', style:'How you like to eat' };
+    const list = TASTE_SEED[tasteTab] || [];
+    const extra = tasteDiscovered.filter(d => d.kind === tasteTab).map(d => d.name);
+    const chip = (item)=>{
+      const st = tasteState(item);
+      const bg = st==='like' ? 'var(--dhania)' : st==='avoid' ? 'var(--mirch)' : 'transparent';
+      const fg = st ? 'var(--on-accent)' : 'var(--text)';
+      const bd = st==='like' ? 'var(--dhania)' : st==='avoid' ? 'var(--mirch)' : 'var(--border2)';
+      return `<button class="chip" style="background:${bg};color:${fg};border-color:${bd};"
+        onclick="tapTaste(${jsAttr(item)}, ${jsAttr(tasteTab)})">${st==='avoid'?'✕ ':''}${esc(item)}</button>`;
+    };
+    const n = tasteCount();
+    return `
+      <div class="tiny" style="color:var(--text3);">${n} picked${n>=TASTE_MAX?' — plenty to go on':''}</div>
+      ${extra.length ? `<div style="margin-top:12px;padding:11px;background:var(--menu-surface);
+        border:0.5px solid var(--menu-border);border-radius:12px;">
+        <div class="eyebrow" style="color:var(--dhania);">More like what you picked</div>
+        <div class="chips" style="margin-top:9px;">${extra.map(chip).join('')}</div>
+      </div>` : ''}
+      ${tasteBusy ? `<div class="tiny" style="margin-top:8px;color:var(--text3);">
+        Finding more like that<span class="dots"></span></div>` : ''}
+      <div class="chips" style="gap:6px;margin-top:14px;">
+        ${['dish','ingredient','style'].map(k=>
+          `<button class="chip ${k===tasteTab?'on':''}" onclick="setTasteTab(${jsAttr(k)})">${kindLabel[k]}</button>`).join('')}
+      </div>
+      <div class="chips" style="margin-top:12px;">${list.map(chip).join('')}</div>`;
+  }
+
+  function renderTastePicker(){
+    openSheet(`
+      <h2>What ${esc(activePerson)} likes</h2>
+      <p class="muted" style="margin:8px 0 10px;">Tap once to like it. Tap again if you'd rather avoid it.</p>
+      <div id="tp-body">${tasteMarkup()}</div>
+      <div class="field" style="margin-top:18px;">
+        <label>Anything not here</label>
+        <input id="tp-free" placeholder="e.g. bhutte ka kees, no mushrooms"
+          value="${esc((members[activePerson]||{}).likes||'')}">
+        <div class="tiny" style="margin-top:6px;color:var(--text3);">
+          Free text still works for anything the list doesn't cover.</div>
+      </div>
+      <div class="btn-row" style="margin-top:16px;">
+        <button onclick="closeSheet()">Cancel</button>
+        <button class="btn-primary" onclick="saveTaste()">Save</button>
+      </div>`);
+  }
+
+  // Repaint only the chip grid. Re-rendering the whole screen would wipe whatever the
+  // person has typed into the free-text box (and, in onboarding, their name and diet)
+  // every single time they tapped a chip.
+  function refreshTaste(){
+    const onb = document.getElementById('onb');
+    const inOnb = onb && !onb.classList.contains('hidden');
+    // Onboarding's copy of the grid stays in the DOM after onboarding ends, so this
+    // checks which screen is actually showing rather than trusting the id to be unique.
+    const el = inOnb ? document.getElementById('ob-taste') : document.getElementById('tp-body');
+    if (el) el.innerHTML = tasteMarkup();
+  }
+  function setTasteTab(k){ tasteTab = k; refreshTaste(); }
+
+  // Tri-state: neutral → like → avoid → neutral. Styles go in their own bucket because
+  // "light dinners" is an instruction to the menu, not a dish it can cook.
+  function tapTaste(item, kind){
+    const bucket = kind === 'style' ? 'style' : 'like';
+    const inLike = taste[bucket].includes(item);
+    const inAvoid = taste.avoid.includes(item);
+    if (!inLike && !inAvoid){
+      if (tasteCount() >= TASTE_MAX){ toast(`${TASTE_MAX} is plenty — remove one first`); return; }
+      taste[bucket].push(item);
+      queueTasteExpansion(item, kind);
+    } else if (inLike){
+      taste[bucket] = taste[bucket].filter(x=>x!==item);
+      taste.avoid.push(item);
+    } else {
+      taste.avoid = taste.avoid.filter(x=>x!==item);
+    }
+    refreshTaste();
+  }
+
+  // Debounced: three quick taps are one call, not three. Styles don't expand — there is
+  // no useful "more like light dinners".
+  function queueTasteExpansion(item, kind){
+    if (kind === 'style') return;
+    if (tasteExpansions >= TASTE_EXPAND_MAX) return;
+    if (tasteCount() >= TASTE_MAX) return;
+    clearTimeout(tasteTimer);
+    tasteTimer = setTimeout(()=>expandTaste(), 1400);
+  }
+
+  async function expandTaste(){
+    if (tasteBusy) return;
+    const liked = taste.like.slice(-6);
+    if (!liked.length) return;
+    tasteBusy = true; tasteExpansions++;
+    refreshTaste();
+    try {
+      // The exclusion list is the point: never spend a call regenerating the fixed list.
+      const exclude = TASTE_SEED.dish.concat(TASTE_SEED.ingredient)
+        .concat(tasteDiscovered.map(d=>d.name)).concat(taste.avoid);
+      const r = await askJSON(
+        `Someone in a North Indian household likes: ${liked.join(', ')}.\n` +
+        `Suggest 5 more everyday Indian foods they would probably also like — dishes a home ` +
+        `cook actually makes, or ingredients, named the way a Delhi household would say them.\n` +
+        `Do NOT suggest any of these, they are already offered: ${exclude.join(', ')}.\n` +
+        `No restaurant, fusion or foreign dishes. No invented names.\n` +
+        `Return an array of {name, kind} where kind is "dish" or "ingredient".`, 400);
+      if (Array.isArray(r)){
+        const have = {};
+        TASTE_SEED.dish.concat(TASTE_SEED.ingredient).forEach(x=>have[x.toLowerCase()]=1);
+        tasteDiscovered.forEach(d=>have[d.name.toLowerCase()]=1);
+        r.forEach(x=>{
+          const nm = String(x.name||'').trim();
+          if (!nm || have[nm.toLowerCase()]) return;
+          have[nm.toLowerCase()] = 1;
+          tasteDiscovered.unshift({ name:nm, kind: x.kind==='ingredient'?'ingredient':'dish' });
+        });
+        tasteDiscovered = tasteDiscovered.slice(0, 18);
+      }
+    } catch(e){ /* expansion is a bonus, never a blocker — the seed list still works */ }
+    tasteBusy = false;
+    refreshTaste();
+  }
+
+  async function saveTaste(){
+    const free = (document.getElementById('tp-free')||{}).value || '';
+    const person = activePerson;
+    const p = members[person] || (members[person] = Object.assign({}, BLANK));
+    const before = { picks:p.picks, likes:p.likes };
+    p.picks = JSON.parse(JSON.stringify(taste));
+    p.likes = free;
+    closeSheet();
+    saveLocal();
+    renderYou();
+    // Only the fields this screen owns are sent; the backend preserves the rest, so
+    // saving taste can't wipe a diet or an allergy set on another screen.
+    const r = await sheetPost({ action:'savePreferences', person:person, picks:taste, likes:free });
+    if (!r || r.error || r.success === false){
+      p.picks = before.picks; p.likes = before.likes;
+      saveLocal(); renderYou();
+      toast(/unknown action/i.test(String((r||{}).error||'')) ? 'Backend needs redeploying' : "Couldn't save that");
+      return;
+    }
+    toast('Saved');
+    // Taste changed, so the menu on screen is answering an out-of-date question.
+    pages = []; pageIdx = 0; lastMenuFor = '';
+    loadMenu(true);
+    syncAll(true);
+  }
+
+  // One line the prompts can use, combining picks and the free-text overflow.
+  function tasteLine(person){
+    const t = tasteFor(person), p = members[person] || {};
+    const likes = t.like.concat(p.likes ? [p.likes] : []).filter(Boolean);
+    const avoid = t.avoid.concat(p.dislikes ? [p.dislikes] : []).filter(Boolean);
+    return {
+      likes: likes.join(', ') || '—',
+      avoid: avoid.join(', ') || '—',
+      style: t.style.join(', ') || ''
+    };
   }
 
   // ══════════ THE MENU ══════════
@@ -1429,9 +1704,19 @@
         </div>
       </div>
       <div class="field">
+        <label>Which meals should it plan</label>
+        <div class="chips" id="ps-slots">
+          ${['breakfast','lunch','snack','dinner'].map(sl=>
+            `<button class="chip ${(p.slots||['breakfast','lunch','dinner']).includes(sl)?'on':''}"
+              onclick="toggleChip(this)" data-v="${sl}">${cap(sl)}</button>`).join('')}
+        </div>
+        <div class="tiny" style="margin-top:6px;color:var(--text3);">
+          Anything you leave off stays yours to decide day to day.</div>
+      </div>
+      <div class="field">
         <label>Anything else? (optional)</label>
-        <input id="ps-notes" placeholder="e.g. lighter dinners, no rice at night"
-          value="${esc(p.notes||'')}">
+        <textarea id="ps-notes" rows="3" style="width:100%;resize:vertical;"
+          placeholder="e.g. lighter dinners, no rice at night, more dal, keep Sundays simple">${esc(p.notes||'')}</textarea>
       </div>
       <button class="btn-primary" style="width:100%;" onclick="generatePlan()">Generate the plan</button>
       <div class="tiny" style="margin-top:10px;color:var(--text3);">
@@ -1442,6 +1727,10 @@
     const days = +picked('ps-days') || 10;
     const gap  = +picked('ps-gap');
     const notes = (document.getElementById('ps-notes')||{}).value || '';
+    const slotEl = document.getElementById('ps-slots');
+    let slots = slotEl ? [...slotEl.querySelectorAll('.chip.on')].map(c=>c.dataset.v)
+                       : ['breakfast','lunch','dinner'];
+    if (!slots.length){ toast('Pick at least one meal to plan'); return; }
     const person = activePerson, me_ = members[person] || BLANK;
     openSheet(`<h2>Building the plan</h2>
       <div class="muted" style="margin-top:12px;">Working through ${days} days<span class="dots"></span></div>`);
@@ -1451,25 +1740,29 @@
                           : 'Repeats are fine.';
       const r = await askJSON(
         `Build a ${days}-day home meal plan for ${person} in a North Indian household with a cook.\n` +
-        `Diet: ${me_.diet}. Likes: ${me_.likes||'—'}. Dislikes: ${me_.dislikes||'—'}. ` +
+        `Diet: ${me_.diet}. Likes: ${tasteLine(person).likes}. Dislikes: ${tasteLine(person).avoid}. ` +
+        (tasteLine(person).style ? `Prefers: ${tasteLine(person).style}. ` : '') +
         `Allergies: ${me_.allergies||'None'}. Favourites: ${me_.favourites||'—'}.\n` +
         `Daily targets: ${me_.cal} kcal, ${me_.protein} g protein, ${me_.fiber} g fibre.\n` +
         (known.length ? `The cook already makes these — prefer them: ${known.join(', ')}.\n` : '') +
         (notes ? `Also: ${notes}\n` : '') +
         `${gapLine}\n` +
+        `Plan ONLY these meals: ${slots.join(', ')}. Do not plan any others.\n` +
         `Rules: everyday North Indian home cooking, names the household would actually say, ` +
         `nothing needing a special appliance or unusual ingredient, no fusion or restaurant dishes, ` +
         `no invented names. Breakfast quick and protein-led, lunch the fullest meal, snack small, ` +
-        `dinner lighter and easier to digest. Snack may be an empty string if not needed.\n` +
-        `Return an array of exactly ${days} objects: {day, breakfast, lunch, snack, dinner} ` +
+        `dinner lighter and easier to digest.\n` +
+        `Return an array of exactly ${days} objects: {day, ${slots.join(', ')}} ` +
         `where day is 1-based. Dish names only, no descriptions.`, 2200);
       if (!Array.isArray(r) || !r.length) throw new Error('empty');
       planDraft = {
-        person: person, days: days, repeatGap: gap, notes: notes,
+        person: person, days: days, repeatGap: gap, notes: notes, slots: slots,
         startDate: today(),
-        plan: r.slice(0, days).map((d,i)=>({ day:i,
-          slots:{ breakfast:String(d.breakfast||''), lunch:String(d.lunch||''),
-                  snack:String(d.snack||''), dinner:String(d.dinner||'') } }))
+        plan: r.slice(0, days).map((d,i)=>{
+          const out = {};
+          slots.forEach(sl => out[sl] = String(d[sl] || ''));
+          return { day:i, slots:out };
+        })
       };
       openPlanEditor(true);
     } catch(e){
@@ -1508,11 +1801,11 @@
           onclick="setPlanDay(${i})">${esc(label(i))} ${i+1}</button>`).join('')}
       </div>
       <div style="margin-top:14px;">
-        ${['breakfast','lunch','snack','dinner'].map(sl=>`
+        ${(p.slots||Object.keys(d.slots)).map(sl=>`
           <div class="field">
             <label>${cap(sl)}</label>
             <input id="pe-${sl}" value="${esc(d.slots[sl]||'')}"
-              placeholder="${sl==='snack'?'Leave blank to skip':'Dish name'}"
+              placeholder="Dish name — leave blank to skip this one"
               oninput="updatePlanSlot(${jsAttr(sl)}, this.value)">
           </div>`).join('')}
       </div>
@@ -1541,7 +1834,7 @@
     const items = [];
     p.plan.forEach((d,i)=>{
       const date = addDays(p.startDate, i);
-      ['breakfast','lunch','snack','dinner'].forEach(sl=>{
+      (p.slots || Object.keys(d.slots)).forEach(sl=>{
         const dish = String(d.slots[sl]||'').trim();
         if (!dish) return;
         if (date === today() && h >= slotEndHour(sl)) return;   // that meal is already over
@@ -1557,7 +1850,7 @@
     await sheetPost({ action:'clearMenuRange', person:person, from:today(), source:'plan' });
     const saved = await sheetPost({ action:'saveMealPlan', person:person, mode:'fixed',
       startDate:p.startDate, days:p.plan.length, repeatGap:p.repeatGap, notes:p.notes,
-      plan:p.plan, status:'active' });
+      plan:p.plan, slots:p.slots, status:'active' });
     const added = await sheetPost({ action:'addMenuItems', addedBy:person, items:items });
     if (!saved || saved.error || !added || added.error){
       toast(/unknown action/i.test(String((saved||added||{}).error||''))
@@ -1565,7 +1858,7 @@
       return;
     }
     mealPlans[person] = { person:person, mode:'fixed', startDate:p.startDate, days:p.plan.length,
-                          repeatGap:p.repeatGap, notes:p.notes, plan:p.plan, status:'active' };
+                          repeatGap:p.repeatGap, notes:p.notes, plan:p.plan, slots:p.slots, status:'active' };
     settings.planPromptedOn = '';
     saveLocal();
     await syncAll(true);
@@ -2497,9 +2790,14 @@
 
     // Give Claude each person's likes/dislikes/favourites AND how well the cook
     // makes dishes, so it can both match tastes and prefer well-made dishes.
-    const roster = Object.entries(members).map(([n,p])=>
-      `${n}: diet ${p.diet}; likes ${p.likes||'anything'}; dislikes ${p.dislikes||'none'}; ` +
-      `favourites ${p.favourites||'none'}; allergies ${p.allergies||'none'}; protein target ${p.protein} g`).join('\n');
+    // Taste picks feed the prompt ahead of the free text: "Rajma Chawal, Paneer, Palak"
+    // is something the menu can actually match on, where "likes homely food" is not.
+    const roster = Object.entries(members).map(([n,p])=>{
+      const t = tasteLine(n);
+      return `${n}: diet ${p.diet}; likes ${t.likes}; dislikes ${t.avoid}; ` +
+        (t.style ? `prefers ${t.style}; ` : '') +
+        `favourites ${p.favourites||'none'}; allergies ${p.allergies||'none'}; protein target ${p.protein} g`;
+    }).join('\n');
     const wellMade = Object.entries(dishMacros).filter(([,m])=>m.rating==='favourite').map(([k])=>cap(k));
     const poorlyMade = Object.entries(dishMacros).filter(([,m])=>m.rating==='avoid').map(([k])=>cap(k));
     const cantMake = Object.entries(dishMacros).filter(([,m])=>m.knows==='no').map(([k])=>cap(k));
@@ -2742,11 +3040,16 @@
     if (!m || m.details !== null) return;   // already loaded or loading
     try {
       const r = await askJSON(
-        `Briefly describe the dish "${m.dish}" for someone deciding whether to cook it.\n` +
-        `Return {what, portion, serving} where "what" is one sentence on what the dish is, ` +
-        `"portion" is a typical per-person serving with a number (e.g. "1 bowl, ~200 g"), and ` +
-        `"serving" clarifies how components go together — mixed, separate, or as sides ` +
-        `(e.g. "Serve the eggs on the side, not mixed into the oats"). Keep each under 20 words.`, 350);
+        `Describe the dish "${m.dish}" for an Indian household deciding whether to cook it today.\n` +
+        `Write the way one family member would explain it to another — plain, simple English, ` +
+        `everyday Indian food words (sabzi, dal, roti, curd, tadka) rather than chef or ` +
+        `restaurant-menu language. No words like "aromatic", "hearty", "medley", "infused", ` +
+        `"delicately", "wholesome". Do not sell it; just say what it is.\n` +
+        `Return {what, portion, serving} where "what" is one short sentence on what the dish ` +
+        `actually is, "portion" is a normal serving for one person with a number ` +
+        `(e.g. "1 katori, 2 roti"), and "serving" says how it is eaten — with what, ` +
+        `mixed or separate (e.g. "Eat the eggs on the side, not mixed into the oats"). ` +
+        `Keep each under 18 words.`, 350);
       m.details = { what:r.what||'', portion:r.portion||'', serving:r.serving||'' };
     } catch(e){ m.details = false; }
     if (expandedDish === i) renderMenu();
@@ -2814,6 +3117,35 @@
   }
 
   // ══════════ COOK RATING ══════════
+  // A swept meal has nobody on screen to ask, so the cook rating — the most valuable
+  // and least replaceable signal in this app — would quietly thin out exactly as fixed
+  // menus got used more. This asks once on the next open, batched, reusing the same
+  // sheet (which already has a Skip). Scoped to *dishes* with no rating yet, so it is
+  // self-limiting: rate a dish once and it is never asked about again.
+  function unratedAutoDishes(){
+    const since = addDays(today(), -2);
+    const seen = {}, out = [];
+    allMeals().forEach(m => {
+      if (m.source !== 'auto') return;
+      if (!m.date || m.date < since) return;
+      const k = String(m.dish||'').trim().toLowerCase();
+      if (!k || seen[k]) return;
+      if ((dishMacros[k]||{}).rating) return;    // already rated — never ask twice
+      seen[k] = 1;
+      out.push(String(m.dish).trim());
+    });
+    return out.slice(0, 4);                      // four is a prompt; ten is a chore
+  }
+  function maybePromptAutoRatings(){
+    if (settings.ratePromptedOn === today()) return false;
+    const dishes = unratedAutoDishes();
+    if (!dishes.length) return false;
+    settings.ratePromptedOn = today();
+    saveLocal();
+    promptRating(dishes);
+    return true;
+  }
+
   // After a home-cooked meal, ask how well the cook made each dish. The rating is
   // per-dish (shared) and feeds back into future menus: favourites float up, avoids
   // get warned/demoted.
@@ -3384,11 +3716,20 @@
     ].map(([l,v,u])=>`<div class="row"><span class="muted">${l}</span>
         <span class="mono">${v} ${u}</span></div>`).join('');
 
+    const t = tasteFor(activePerson);
+    const nPicks = t.like.length + t.avoid.length + t.style.length;
     document.getElementById('y-prefs').innerHTML = [
-      ['Diet', p.diet], ['Favourites', p.favourites || 'Not set'], ['Likes', p.likes || 'Not set'],
-      ['Dislikes', p.dislikes || 'None'], ['Allergies', p.allergies || 'None']
+      ['Diet', p.diet],
+      ['Likes', t.like.length ? t.like.join(', ') : (p.likes || 'Not set')],
+      ['Avoids', t.avoid.length ? t.avoid.join(', ') : (p.dislikes || 'None')],
+      ['How you like to eat', t.style.length ? t.style.join(', ') : 'Not set'],
+      ['Favourites', p.favourites || 'Not set'], ['Allergies', p.allergies || 'None']
     ].map(([l,v])=>`<div><div class="tiny">${l}</div>
-        <div style="font-size:14px;margin-top:2px;">${esc(v)}</div></div>`).join('');
+        <div style="font-size:14px;margin-top:2px;">${esc(v)}</div></div>`).join('') +
+      `<button style="width:100%;margin-top:12px;" onclick="openTastePicker()">
+        ${nPicks ? 'Update what you like' : 'Pick what you like'}</button>` +
+      (nPicks ? '' : `<div class="tiny" style="margin-top:8px;color:var(--text3);">
+        Tapping a few dishes you like makes every suggestion better — and it's faster than typing.</div>`);
 
     const lang = LANGS[settings.cookLang] || LANGS.hi;
     const total = Object.keys(dishMacros).length;
@@ -3737,10 +4078,15 @@
   // ══════════ ONBOARDING ══════════
   // Four steps, every one skippable, sensible defaults throughout — you should be
   // able to log your first meal inside a minute.
-  let onbStep = 0, onbData = { name:'', diet:'', favourites:'', likes:'', dislikes:'', allergies:'', age:25, height:175, weight:70, goal:'maintain', cookLang:'hi' };
+  let onbStep = 0, onbData = { name:'', diet:'', favourites:'', likes:'', dislikes:'', allergies:'',
+                               picks:null, age:25, height:175, weight:70, goal:'maintain', cookLang:'hi' };
 
   function startOnboarding(){
     onbStep = 0;
+    // A new person starts with an empty palate, not whoever was last on this phone.
+    taste = { like:[], avoid:[], style:[] };
+    tasteDiscovered = []; tasteExpansions = 0; tasteTab = 'dish';
+    seedTasteRail();
     document.getElementById('onb').classList.remove('hidden');
     renderOnb();
   }
@@ -3765,20 +4111,25 @@
     if (onbStep === 1){
       b.innerHTML = dots + `
         <h1>What do you eat?</h1>
-        <p class="muted" style="margin:10px 0 22px;">This shapes every suggestion — and lets the app hint what you'll enjoy. Be as specific as you like.</p>
+        <p class="muted" style="margin:10px 0 22px;">This shapes every suggestion. Tapping is
+          faster than typing, and gives the app something it can actually match on.</p>
         <div class="field"><label>Diet</label>
           <div class="chips" id="ob-diet">
             ${['Vegetarian','Eggetarian','Non-vegetarian','Vegan'].map(d=>
               `<button class="chip" onclick="pickOne(this)" data-v="${d}">${d}</button>`).join('')}
           </div></div>
-        <div class="field"><label for="ob-favourites">Favourite dishes or ingredients</label>
-          <input id="ob-favourites" placeholder="Paneer, rajma, dosa, spicy food"></div>
-        <div class="field"><label for="ob-likes">Other things you like</label>
-          <input id="ob-likes" placeholder="Salads with dressing, South Indian"></div>
-        <div class="field"><label for="ob-dislikes">Dislikes</label>
-          <input id="ob-dislikes" placeholder="Bitter gourd, too much oil, bland food"></div>
+        <div class="field">
+          <label>Tap what you like</label>
+          <div class="tiny" style="margin:2px 0 10px;color:var(--text3);">
+            Tap once to like it, again if you'd rather avoid it. Ten or so is plenty —
+            the more you tap, the better the suggestions get.</div>
+          <div id="ob-taste">${tasteMarkup()}</div>
+        </div>
+        <div class="field"><label for="ob-likes">Anything not on the list</label>
+          <input id="ob-likes" placeholder="e.g. bhutte ka kees, no mushrooms"
+            value="${esc(onbData.likes||'')}"></div>
         <div class="field"><label for="ob-allergies">Allergies / can't eat</label>
-          <input id="ob-allergies" placeholder="None"></div>
+          <input id="ob-allergies" placeholder="None" value="${esc(onbData.allergies||'')}"></div>
         <div class="btn-row">
           <button onclick="onbNext(true)">Skip</button>
           <button class="btn-primary" onclick="onbNext()">Continue</button>
@@ -3843,10 +4194,12 @@
     }
     if (onbStep === 1 && !skip){
       onbData.diet = picked('ob-diet') || '';
-      onbData.favourites = (document.getElementById('ob-favourites').value || '').trim();
       onbData.likes = (document.getElementById('ob-likes').value || '').trim();
-      onbData.dislikes = (document.getElementById('ob-dislikes').value || '').trim();
       onbData.allergies = (document.getElementById('ob-allergies').value || '').trim();
+      // Likes/dislikes now come from the tapped chips; the free-text box is overflow.
+      onbData.picks = JSON.parse(JSON.stringify(taste));
+      onbData.dislikes = taste.avoid.join(', ');
+      onbData.favourites = taste.like.slice(0, 6).join(', ');
     }
     if (onbStep === 2 && !skip){
       onbData.age = +document.getElementById('ob-age').value || 25;
@@ -3874,6 +4227,7 @@
       likes: onbData.likes || '',
       dislikes: onbData.dislikes || '',
       allergies: onbData.allergies || 'None',
+      picks: onbData.picks || { like:[], avoid:[], style:[] },
       age, height, weight, cal, protein, carbs, fat
     });
     activePerson = name;
@@ -3885,7 +4239,8 @@
     await sheetPost({ action:'updateMacros', person:name, calories:cal, protein, carbs, fat, weight });
     await sheetPost({ action:'savePreferences', person:name, diet:members[name].diet,
       likes:members[name].likes, dislikes:members[name].dislikes,
-      allergies:members[name].allergies, favourites:members[name].favourites });
+      allergies:members[name].allergies, favourites:members[name].favourites,
+      picks:members[name].picks });
     boot();
   }
 
@@ -3934,9 +4289,10 @@
     // Cost the last few dishes so the day bar has something real to show.
     const recent = [...new Set(eatenToday().map(m=>m.dish))].slice(0,5);
     for (const d of recent) await estimateMacros(d);
-    // Asked after the day is on screen, and only of the person whose plan it is —
-    // a rotation ending is their decision to make, not the household's.
-    maybePromptPlanRenewal();
+    // Two things may want the screen. Rating comes first because it's about meals that
+    // already happened, and it only asks about dishes that logged themselves. Renewal
+    // waits for the next open rather than stacking a second sheet on top of the first.
+    if (!maybePromptAutoRatings()) maybePromptPlanRenewal();
   }
 
   async function init(){
