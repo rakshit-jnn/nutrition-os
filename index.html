@@ -16,6 +16,7 @@
     --haldi:#B8791A; --dhania:#5C7F2E; --mirch:#A83E27;
     --haldi-bg:#FAF0DC; --dhania-bg:#EDF3E2; --mirch-bg:#FBEAE5;
     --cook-surface:#FFFBF2; --cook-border:#E8D9B8;
+    --menu-surface:#F6FAF0; --menu-border:#CFDFB9;
     --on-accent:#F5F3ED; --accent-solid:#1C1814;
     /* Three roles. Bricolage Grotesque is the voice — a variable grotesque with
        slightly irregular proportions, warm rather than corporate, used only for
@@ -34,6 +35,7 @@
       --haldi:#E0A02E; --dhania:#7FA34A; --mirch:#C4553B;
       --haldi-bg:#2B2213; --dhania-bg:#1F2617; --mirch-bg:#2B1A15;
       --cook-surface:#2A2318; --cook-border:#4C3F2A;
+      --menu-surface:#1E2517; --menu-border:#3E4C2E;
       --on-accent:#231903; --accent-solid:#E0A02E;
     }
   }
@@ -70,6 +72,14 @@
     background:var(--cook-surface); border:0.5px solid var(--cook-border);
     box-shadow:0 1px 2px rgba(0,0,0,.05), 0 6px 18px -8px rgba(0,0,0,.14);
   }
+  /* The Menu is settled where Cook next is still a suggestion, so it takes the
+     green of a confirmed thing rather than the haldi of an offer. Same raised
+     treatment: both are decisions, one has just already been made. */
+  .card-menu {
+    background:var(--menu-surface); border:0.5px solid var(--menu-border);
+    box-shadow:0 1px 2px rgba(0,0,0,.05), 0 6px 18px -8px rgba(0,0,0,.14);
+  }
+  .card-menu:empty { display:none; }
   .row { display:flex; align-items:center; justify-content:space-between; gap:10px; }
 
   button, .btn {
@@ -186,6 +196,12 @@
 
     <div class="pad" style="margin-top:16px;">
       <div class="card" id="t-macros"></div>
+    </div>
+
+    <!-- The Menu sits above Cook next because it outranks it: this is what has been
+         decided, Cook next is only the waiter still making suggestions. -->
+    <div class="pad" style="margin-top:12px;">
+      <div class="card card-menu" id="t-menu"></div>
     </div>
 
     <div class="pad" style="margin-top:12px;">
@@ -347,6 +363,14 @@
 
     <div class="pad" style="margin-top:12px;">
       <div class="card">
+        <div class="eyebrow">How you choose meals</div>
+        <div class="muted" style="margin-top:10px;" id="y-plan-summary"></div>
+        <div id="y-plan-body" style="margin-top:12px;"></div>
+      </div>
+    </div>
+
+    <div class="pad" style="margin-top:12px;">
+      <div class="card">
         <div class="eyebrow">Your cook</div>
         <div class="muted" style="margin-top:10px;" id="y-cook-summary"></div>
         <button style="width:100%;margin-top:12px;" onclick="openCookSettings()">Cook settings</button>
@@ -411,7 +435,7 @@
   const VISION_API = '/api/vision';
   const MODEL      = 'claude-sonnet-4-5';
   const SHEET_URL  = 'https://script.google.com/macros/s/AKfycbxXDdY5y_QUVIML1Zb4nwTnuryI_Uqhe-EGwc_iDT_s5OZ9wJNcfWvILo4rCC5bN6XT/exec';
-  const VERSION    = 'v2.3';
+  const VERSION    = 'v2.5';
   const POLL_MS    = 30000;
 
   // ══════════ STATE ══════════
@@ -425,9 +449,19 @@
   // 2 = happy to try new ones. prepDismissed holds the date the evening
   // soak-reminder was last dismissed, so it doesn't nag twice in one night.
   let settings     = { cookLang:'hi', cookName:'', cookPhone:'', lowThresholds:{},
-                       adventure:1, prepDismissed:'' };
+                       adventure:1, prepDismissed:'', planPromptedOn:'' };
   let pendingSets  = null;
   let screen       = 'today';
+  // The Menu: dishes that have been finalised, one row per person per dish, shared
+  // across every phone in the house. Cook next is a recommendation; this is the order.
+  let menuBoard    = [];
+  // Per-person fixed plans, keyed by name. Absent (or mode:'daily') means that
+  // person picks day to day, which is the original behaviour and stays the default.
+  let mealPlans    = {};
+  // Set when an older Apps Script deployment doesn't know the menu actions yet, so
+  // the app can say what to fix rather than silently dropping every pick.
+  let menuBackendMissing = false;
+  let sweeping     = false;
 
   const LANGS = {
     hi:{ name:'Hindi',    native:'हिन्दी',   voice:'hi-IN' },
@@ -502,6 +536,7 @@
     craving = '';           // a different meal is a fresh intent, like a craving
     rejected = [];
     pages = []; pageIdx = 0;
+    renderMenuBoard();      // the Menu follows the slot switch too — it's the same question
     loadMenu(true);
   }
   function mealSlot(){
@@ -577,15 +612,34 @@
     syncing = true;
     if (!silent) setSyncLabel('syncing…');
     try {
-      const [inv, ml, mac, prefs, wk, lib, skl, wl] = await Promise.all([
+      const [inv, ml, mac, prefs, wk, lib, skl, wl, mn, pl] = await Promise.all([
         sheetGet('getInventory'), sheetGet('getMealLog'), sheetGet('getMacros'),
         sheetGet('getPreferences'), sheetGet('getWorkoutLog'),
-        sheetGet('getDishLibrary'), sheetGet('getCookSkills'), sheetGet('getWishlist')
+        sheetGet('getDishLibrary'), sheetGet('getCookSkills'), sheetGet('getWishlist'),
+        sheetGet('getMenu'), sheetGet('getMealPlans')
       ]);
+
+      // Same guard as the wishlist: an Apps Script still on the previous version
+      // answers "unknown action", and an undefined menu must not blank the card.
+      if (mn && Array.isArray(mn.menu)){
+        menuBoard = mn.menu;
+        menuBackendMissing = false;
+      } else if (mn && /unknown action/i.test(String(mn.error||''))){
+        menuBackendMissing = true;
+      }
+      if (pl && Array.isArray(pl.plans)){
+        mealPlans = {};
+        pl.plans.forEach(p => { mealPlans[p.person] = p; });
+      }
 
       // Guarded: an older Apps Script deployment answers "unknown action" here, and
       // an undefined wishlist must not wipe the hearts already on screen.
-      if (wl && Array.isArray(wl.wishlist)) wishlist = wl.wishlist;
+      if (wl && Array.isArray(wl.wishlist)){
+        wishlist = wl.wishlist;
+        wishlistBackendMissing = false;
+      } else if (wl && /unknown action/i.test(String(wl.error||''))){
+        wishlistBackendMissing = true;      // say so instead of failing silently
+      }
 
       // Two sources, one in-memory shape. Nutrition comes from the shared library
       // (identical for every household); what the cook can make and how well comes
@@ -617,7 +671,8 @@
 
       if (ml && ml.meals)
         mealLog = ml.meals.map(m=>({ dish:m.mealName, date:toISODate(m.date), raw:m.date,
-                                     by:m.loggedBy, type:m.mealType, notes:m.notes }));
+                                     by:m.loggedBy, type:m.mealType, notes:m.notes,
+                                     logId:m.logId||'', source:m.source||'manual' }));
 
       if (mac && mac.macros && mac.macros.length){
         const live = mac.macros.map(r=>r.person);
@@ -658,6 +713,47 @@
       renderAll();
       setSyncLabel('synced');
     } finally { syncing = false; }
+    // After the state is on screen, not before — the sweep is a write, and a slow
+    // one shouldn't hold up showing the day. Fired outside the sync lock so its own
+    // follow-up sync isn't rejected by `if (syncing) return`.
+    runSweep();
+  }
+
+  // ── The auto-log sweep ──
+  // A menu dish becomes a logged meal once its slot has finished; until then it can
+  // still be cancelled, which is what makes silent logging fair rather than presumptuous.
+  // The decision of what to log is the backend's — it holds the lock and the clock, so
+  // two phones can't double-log. This side only decides whether it's worth asking, by
+  // checking the rows it can already see. No due rows, no call.
+  function slotEndHour(slot){
+    return { breakfast:11, lunch:16, snack:19, dinner:24 }[slot] || 24;
+  }
+  function dueMenuRows(){
+    const d = today(), h = istHour();
+    return menuBoard.filter(m => {
+      if ((m.status||'open') !== 'open') return false;
+      if (m.date > d) return false;
+      if (m.date === d && h < slotEndHour(String(m.slot||'').toLowerCase())) return false;
+      return true;
+    });
+  }
+  async function runSweep(){
+    if (sweeping || menuBackendMissing) return;
+    if (!dueMenuRows().length) return;
+    sweeping = true;
+    try {
+      const r = await sheetPost({ action:'sweepMenu' });
+      if (!r || r.error || r.busy) return;          // another phone holds the lock; next poll retries
+      if (r.logged){
+        await syncAll(true);                        // pull the meals it just wrote
+        // Cost them, or the day card under-reports a meal nobody typed. Only genuinely
+        // new dishes cost a call; anything already in the library is free.
+        const fresh = [...new Set((r.meals||[]).map(m=>m.dish))].slice(0,6);
+        for (const d of fresh) await estimateMacros(d);
+        renderToday();
+      }
+    } catch(e){ /* the sweep retries on the next poll — never block the app on it */ }
+    finally { sweeping = false; }
   }
   function parseSets(s){ try { return JSON.parse(s) || []; } catch(e){ return []; } }
   function setSyncLabel(txt){
@@ -784,6 +880,10 @@
   // date and no meal slot, because the whole point is that it's for whenever. It
   // stays out of mealLog so it can never touch today's macros or the repeat rule.
   let wishlist = [];
+  // Set when the backend answers "unknown action", i.e. Code.gs is deployed but at an
+  // older version. Surfaced in the UI rather than swallowed, because the symptom on its
+  // own ("my wishlist keeps emptying") gives no clue what to fix.
+  let wishlistBackendMissing = false;
   function wished(dish){
     const k = String(dish||'').trim().toLowerCase();
     return wishlist.some(w => String(w.dish||'').trim().toLowerCase() === k);
@@ -791,22 +891,42 @@
   // Optimistic, like every other write in this app: the heart fills immediately and
   // the Sheet catches up. A failed write is corrected by the next sync rather than
   // blocking the tap.
+  // Optimistic, but VERIFIED. sheetPost RESOLVES with {error:…} for an unknown
+  // action — it does not throw — so a try/catch here catches nothing and the user
+  // gets told "Saved" while the Sheet receives nothing, until the next sync quietly
+  // replaces the heart with the Sheet's empty truth. Optimistic UI is only honest
+  // if the failure path actually rolls back and says so.
   async function toggleWish(dish){
     const name = String(dish||'').trim();
     if (!name) return;
-    const on = wished(name);
+    const on   = wished(name);
+    const prev = wishlist.slice();          // exact state to restore on failure
     if (on){
       wishlist = wishlist.filter(w => String(w.dish||'').trim().toLowerCase() !== name.toLowerCase());
-      toast('Removed from wishlist');
     } else {
       wishlist = [{ dish:name, addedBy:activePerson, addedAt:nowIST() }].concat(wishlist);
-      toast('Saved — ask her to make it sometime');
     }
     renderMenu(); renderWishlist();
+
+    let r = null;
     try {
-      await sheetPost({ action: on ? 'removeWishlist' : 'addWishlist',
-                        dish:name, addedBy:activePerson });
-    } catch(e){ /* the next sync reconciles */ }
+      r = await sheetPost({ action: on ? 'removeWishlist' : 'addWishlist',
+                            dish:name, addedBy:activePerson });
+    } catch(e){ r = null; }
+
+    if (!r || r.error || r.success === false){
+      wishlist = prev;                      // put the heart back where it was
+      renderMenu(); renderWishlist();
+      const unknown = r && /unknown action/i.test(String(r.error||''));
+      wishlistBackendMissing = !!unknown;
+      renderWishlist();
+      toast(unknown
+        ? "Wishlist needs the new Apps Script — redeploy Code.gs"
+        : "Couldn't save that — try again");
+      return;
+    }
+    wishlistBackendMissing = false;
+    toast(on ? 'Removed from wishlist' : 'Saved — ask her to make it sometime');
   }
 
   let wishOpen = false;
@@ -832,6 +952,14 @@
               onclick="toggleWish(${jsAttr(w.dish)})" aria-label="Remove ${esc(w.dish)}">Remove</button>
           </div>`).join('')
       : `<div class="muted">Tap ♡ on any dish in Cook next to save it here. It's a list of things to ask her to make sometime — it doesn't schedule anything.</div>`;
+    if (wishlistBackendMissing){
+      box.innerHTML = `<div style="border-left:2px solid var(--mirch);background:var(--mirch-bg);padding:9px 11px;margin-bottom:10px;">
+          <div style="font-size:12px;color:var(--mirch);line-height:1.5;">
+            The wishlist can't save yet. The Google Apps Script is running an older version
+            that doesn't know about it — open Apps Script → Deploy → Manage deployments,
+            edit the deployment and set Version to <b>New version</b>.</div>
+        </div>` + box.innerHTML;
+    }
   }
 
   // ══════════ COOK REPERTOIRE ══════════
@@ -935,6 +1063,587 @@
 
     renderQuickChips();
     renderEaten();
+    renderMenuBoard();
+  }
+
+  // Cook next → Menu. This is the commit point: a suggestion becomes an order.
+  // Who it's for is pre-filled from the dish's own tags and stays editable, because
+  // that pre-fill is right most of the time and wrong often enough to matter.
+  function addPickedToMenu(){
+    const dishes = pickedDishes();
+    if (!dishes.length){ toast('Tick at least one dish first'); return; }
+    const everyone = Object.keys(members);
+    const slot = activeSlot(), date = menuDate();
+    openSheet(`
+      <h2>Add to the menu</h2>
+      <p class="muted" style="margin:8px 0 16px;">Who is each dish for? ${date===today()?'':'For tomorrow\'s '+esc(slot)+'.'}</p>
+      ${dishes.map((d,di)=>`
+        <div style="margin-bottom:18px;">
+          <div style="font-weight:600;margin-bottom:8px;">${esc(d.dish)}</div>
+          <div class="chips" id="am-${di}">
+            ${everyone.map(n=>`<button class="chip ${d.for.includes(n)?'on':''}"
+              onclick="toggleChip(this)" data-v="${esc(n)}">${esc(n)}</button>`).join('')}
+          </div>
+        </div>`).join('')}
+      <div class="field">
+        <label>When</label>
+        <div class="chips" id="am-slot">
+          ${['breakfast','lunch','snack','dinner'].map(s=>
+            `<button class="chip ${s===slot?'on':''}" onclick="pickOne(this)" data-v="${s}">${cap(s)}</button>`).join('')}
+        </div>
+      </div>
+      <button class="btn-primary" style="width:100%;" onclick='commitAddToMenu(${jsAttr(dishes.map(d=>d.dish))})'>
+        Add to menu
+      </button>`);
+  }
+
+  async function commitAddToMenu(dishNames){
+    const slot = picked('am-slot') || activeSlot();
+    // The slot picked here decides the day, not the slot that was active when the
+    // sheet opened — choosing "breakfast" at 10pm means tomorrow morning.
+    const date = slotDate(slot);
+    const items = [];
+    dishNames.forEach((dish,di)=>{
+      const el = document.getElementById('am-'+di);
+      const who = el ? [...el.querySelectorAll('.chip.on')].map(c=>c.dataset.v) : [];
+      who.forEach(person => items.push({ dish:dish, date:date, slot:slot, person:person, source:'pick' }));
+    });
+    closeSheet();
+    if (!items.length){ toast('Nobody selected — nothing added'); return; }
+
+    const snapshot = menuBoard.slice();
+    items.forEach(it => menuBoard.push(Object.assign({ id:'tmp'+Math.random(), status:'open', logId:'' }, it)));
+    picked_ = new Set();
+    renderMenuBoard(); renderMenu();
+    const r = await sheetPost({ action:'addMenuItems', addedBy:activePerson, items:items });
+    if (!r || r.error || r.success === false){
+      menuBoard = snapshot;
+      renderMenuBoard();
+      toast(/unknown action/i.test(String((r||{}).error||'')) ? 'Backend needs redeploying' : "Couldn't add that");
+      return;
+    }
+    toast(dishNames.length>1 ? `${dishNames.length} dishes on the menu` : 'On the menu');
+    syncAll(true);
+  }
+
+  // ══════════ THE MENU ══════════
+  // What has been finalised, for whom. Cook next recommends; this is the order that
+  // was placed. It's shared household state in the Sheet rather than per-phone memory,
+  // which is what lets one person's pick show up on someone else's screen — and what
+  // makes "+1" mean anything at all.
+  function tomorrow(){
+    const d = new Date(Date.now() + 86400000);
+    return new Intl.DateTimeFormat('en-CA',{year:'numeric',month:'2-digit',day:'2-digit',timeZone:'Asia/Kolkata'}).format(d);
+  }
+  // Which day a slot belongs to. This MUST use the same boundary the sweep uses —
+  // slotIsToday() answers a different question (its thresholds are "when would this
+  // meal normally have happened", so breakfast reads as past from 8am) and borrowing
+  // it here would file a 9am breakfast under tomorrow while the sweep logged it today.
+  function slotDate(slot){
+    return istHour() < slotEndHour(slot) ? today() : tomorrow();
+  }
+  function menuDate(){ return slotDate(activeSlot()); }
+
+  function menuRowsFor(date, slot){
+    return menuBoard.filter(m => m.date === date && String(m.slot||'').toLowerCase() === slot
+                                 && (m.status||'open') === 'open');
+  }
+  // Grouped by dish, because a dish cooked for three people is one pot, one line on
+  // the cook's order, and one thing to tap — not three.
+  function menuGrouped(date, slot){
+    const out = [], idx = {};
+    menuRowsFor(date, slot).forEach(m => {
+      const k = m.dish.trim().toLowerCase();
+      if (idx[k] == null){ idx[k] = out.length; out.push({ dish:m.dish.trim(), for:[], rows:[] }); }
+      const g = out[idx[k]];
+      if (!g.for.includes(m.person)) g.for.push(m.person);
+      g.rows.push(m);
+    });
+    return out;
+  }
+  function onMenu(dish, person, date, slot){
+    const k = String(dish).trim().toLowerCase();
+    return menuRowsFor(date || menuDate(), slot || activeSlot())
+      .some(m => m.dish.trim().toLowerCase() === k && m.person === person);
+  }
+
+  function renderMenuBoard(){
+    const box = document.getElementById('t-menu');
+    if (!box) return;
+    const date = menuDate(), slot = activeSlot();
+    const groups = menuGrouped(date, slot);
+
+    if (menuBackendMissing){
+      box.innerHTML = `<div class="eyebrow" style="color:var(--mirch);">Menu unavailable</div>
+        <div class="tiny" style="margin-top:8px;line-height:1.6;">The Apps Script backend is on an older version, so
+        finalised dishes can't be saved. In Apps Script: Deploy → Manage deployments → Version: New version.</div>`;
+      return;
+    }
+    if (!groups.length){ box.innerHTML = ''; return; }   // :empty hides the card entirely
+
+    const everyone = Object.keys(members);
+    const rows = groups.map(g => {
+      const mine = g.for.includes(activePerson);
+      const plan = g.rows.some(r => r.source === 'plan');
+      return `<div style="padding:10px 0;border-bottom:0.5px solid var(--border);">
+        <div class="row" style="align-items:flex-start;">
+          <div style="flex:1;min-width:0;">
+            <span class="display" style="font-weight:500;font-size:16px;">${esc(g.dish)}</span>
+            <div class="tiny" style="margin-top:3px;color:var(--text2);">
+              ${esc(whoLabel(g.for))}${plan?' · from your plan':''}
+            </div>
+          </div>
+          <span style="display:flex;align-items:center;gap:8px;flex:0 0 auto;">
+            ${mine
+              ? `<button class="btn-ghost" style="padding:3px 8px;min-height:0;font-size:12px;color:var(--text3);
+                   border:0.5px solid var(--border);border-radius:99px;"
+                   onclick="leaveMenuDish(${jsAttr(g.dish)})">Not me</button>`
+              : `<button class="btn-ghost" style="padding:3px 9px;min-height:0;font-size:12px;color:var(--dhania);
+                   border:0.5px solid var(--dhania);border-radius:99px;"
+                   onclick="joinMenuDish(${jsAttr(g.dish)})">+1</button>`}
+            <button class="btn-ghost" style="padding:2px 5px;min-height:0;font-size:14px;color:var(--text3);"
+              onclick="dropMenuDish(${jsAttr(g.dish)})" aria-label="Remove ${esc(g.dish)} from the menu">&times;</button>
+          </span>
+        </div></div>`;
+    }).join('');
+
+    // Who has nothing for this slot. Named plainly rather than warned about: a person
+    // with no dish simply isn't logged, and that's a legitimate choice, not an error.
+    const covered = {};
+    groups.forEach(g => g.for.forEach(n => covered[n] = 1));
+    const uncovered = everyone.filter(n => !covered[n]);
+
+    box.innerHTML = `
+      <div class="row">
+        <span class="eyebrow" style="color:var(--dhania);">Menu · ${cap(slot)}${date===today()?'':' tomorrow'}</span>
+        <span class="tiny mono" style="color:var(--text3);">${groups.length} dish${groups.length>1?'es':''}</span>
+      </div>
+      <div style="margin-top:4px;">${rows}</div>
+      ${uncovered.length ? `<div class="tiny" style="margin-top:9px;color:var(--text3);">
+        Nothing set for ${esc(uncovered.join(', '))} — so nothing gets logged for ${uncovered.length>1?'them':'them'}.</div>` : ''}
+      <div class="tiny" style="margin-top:9px;color:var(--text3);">
+        Logs itself after ${cap(slot)} unless you change it.</div>
+      <div class="btn-row" style="margin-top:11px;">
+        <button class="btn-primary" onclick="tellCookFromMenu()">Tell cook</button>
+        <button style="flex:0 0 auto;padding:11px 16px;" onclick="logMenuBoard()">Log now</button>
+      </div>`;
+  }
+
+  // ── Joining, leaving, dropping ──
+  // Optimistic, with the rollback the wishlist bug taught us to always write: a
+  // sheetPost RESOLVES with {error} rather than throwing, so a try/catch alone would
+  // show "Saved" and then let the next sync silently undo it on screen.
+  async function menuWrite(body, optimistic){
+    const snapshot = menuBoard.slice();
+    optimistic();
+    renderMenuBoard();
+    const r = await sheetPost(body);
+    if (!r || r.error || r.success === false){
+      menuBoard = snapshot;
+      renderMenuBoard();
+      toast(/unknown action/i.test(String((r||{}).error||'')) ? 'Backend needs redeploying' : "Couldn't save that");
+      return false;
+    }
+    syncAll(true);
+    return true;
+  }
+
+  async function joinMenuDish(dish){
+    const date = menuDate(), slot = activeSlot(), person = activePerson;
+    if (!person) return;
+    await menuWrite(
+      { action:'addMenuItems', addedBy:person,
+        items:[{ dish:dish, date:date, slot:slot, person:person, source:'join' }] },
+      () => menuBoard.push({ id:'tmp'+Date.now(), date:date, slot:slot, dish:dish,
+                             person:person, source:'join', status:'open', logId:'' }));
+  }
+
+  async function leaveMenuDish(dish){
+    const date = menuDate(), slot = activeSlot(), person = activePerson;
+    const k = dish.trim().toLowerCase();
+    await menuWrite(
+      { action:'removeMenuItem', dish:dish, date:date, slot:slot, person:person },
+      () => { menuBoard = menuBoard.filter(m => !(m.date===date && m.slot===slot &&
+                m.dish.trim().toLowerCase()===k && m.person===person)); });
+  }
+
+  // Removing the dish for everyone — the cook isn't making it at all.
+  async function dropMenuDish(dish){
+    const date = menuDate(), slot = activeSlot();
+    const k = dish.trim().toLowerCase();
+    const rows = menuRowsFor(date, slot).filter(m => m.dish.trim().toLowerCase() === k);
+    const snapshot = menuBoard.slice();
+    menuBoard = menuBoard.filter(m => rows.indexOf(m) === -1);
+    renderMenuBoard();
+    for (const r of rows){
+      const res = await sheetPost({ action:'removeMenuItem', id:r.id, dish:r.dish,
+                                    date:r.date, slot:r.slot, person:r.person });
+      if (!res || res.error || res.success === false){
+        menuBoard = snapshot; renderMenuBoard(); toast("Couldn't remove that"); return;
+      }
+    }
+    toast(`${dish} off the menu`);
+    syncAll(true);
+  }
+
+  // Once a dish is logged, its open Menu rows are spent. Fire-and-forget: if one of
+  // these writes fails the row stays open and the sweep logs it after the slot ends,
+  // which reconcilePending and the dedupe in the log view already tolerate — a lost
+  // menu row is a much cheaper failure than a blocked log.
+  function clearMenuRowsFor(dish, who, slot){
+    const k = String(dish).trim().toLowerCase();
+    const dates = [today(), tomorrow()];
+    const gone = [];
+    menuBoard.forEach(m => {
+      if ((m.status||'open') !== 'open') return;
+      if (m.dish.trim().toLowerCase() !== k) return;
+      if (String(m.slot||'').toLowerCase() !== slot) return;
+      if (dates.indexOf(m.date) === -1) return;
+      if (who.indexOf(m.person) === -1) return;
+      gone.push(m);
+    });
+    if (!gone.length) return;
+    menuBoard = menuBoard.filter(m => gone.indexOf(m) === -1);
+    renderMenuBoard();
+    gone.forEach(m => sheetPost({ action:'removeMenuItem', id:m.id, dish:m.dish,
+                                  date:m.date, slot:m.slot, person:m.person }));
+  }
+
+  function menuAsDishes(){
+    return menuGrouped(menuDate(), activeSlot()).map(g => ({ dish:g.dish, for:g.for }));
+  }
+  function tellCookFromMenu(){
+    const d = menuAsDishes();
+    if (!d.length){ toast('Nothing on the menu yet'); return; }
+    tellCookMenu(d);
+  }
+  // "Log now" is the manual shortcut for a meal eaten before its slot ends — the
+  // sweep would get it eventually, this just doesn't make you wait.
+  function logMenuBoard(){
+    const groups = menuGrouped(menuDate(), activeSlot());
+    if (!groups.length){ toast('Nothing on the menu yet'); return; }
+    logDishesFor(groups.map(g => ({ dish:g.dish, for:g.for })), activeSlot());
+  }
+
+  // ══════════ FIXED MENU (the plan) ══════════
+  // Two ways to eat, per person. Daily Selection is the original behaviour and stays
+  // the default: pick off Cook next whenever. Fix Menu is for the person whose real
+  // complaint is having to decide at all — a nutritionist-style rotation, approved
+  // once, that fills the Menu ahead of time and logs itself.
+  //
+  // The plan is a TEMPLATE. Approving it materialises Menu rows day by day; swapping
+  // Tuesday's lunch edits that row and leaves the template alone, so one change can't
+  // silently rewrite the rotation.
+  function planFor(person){ return mealPlans[person] || null; }
+  function planMode(person){
+    const p = planFor(person);
+    return (p && p.mode === 'fixed' && p.status === 'active') ? 'fixed' : 'daily';
+  }
+  function addDays(iso, n){
+    const [y,m,d] = iso.split('-').map(Number);
+    const dt = new Date(Date.UTC(y, m-1, d + n));
+    return dt.toISOString().slice(0,10);
+  }
+  function planLastDate(p){
+    return (p && p.startDate && p.days) ? addDays(p.startDate, p.days - 1) : '';
+  }
+  function planDaysLeft(p){
+    const last = planLastDate(p);
+    if (!last) return 0;
+    const t = today();
+    let n = 0;
+    for (let i = 0; i <= 60; i++){ if (addDays(t, i) > last) break; n = i + 1; }
+    return last < t ? 0 : n;
+  }
+
+  function renderPlanCard(){
+    const sum = document.getElementById('y-plan-summary');
+    const body = document.getElementById('y-plan-body');
+    if (!sum || !body) return;
+    const p = planFor(activePerson), mode = planMode(activePerson);
+    const left = mode === 'fixed' ? planDaysLeft(p) : 0;
+
+    sum.textContent = mode === 'fixed'
+      ? (left ? `Fixed menu — ${left} day${left>1?'s':''} left of ${p.days}.`
+              : 'Your fixed menu has run out.')
+      : 'You pick each meal yourself from Cook next.';
+
+    body.innerHTML = `
+      <div class="chips" style="gap:6px;">
+        <button class="chip ${mode==='daily'?'on':''}" onclick="setMode('daily')">Daily selection</button>
+        <button class="chip ${mode==='fixed'?'on':''}" onclick="setMode('fixed')">Fixed menu</button>
+      </div>
+      ${mode==='fixed' && p && p.plan && p.plan.length
+        ? `<button style="width:100%;margin-top:12px;" onclick="openPlanEditor()">View or edit the plan</button>
+           <button class="btn-ghost" style="width:100%;margin-top:8px;font-size:13px;"
+             onclick="openPlanSetup()">Make a new plan</button>`
+        : mode==='fixed'
+          ? `<button class="btn-primary" style="width:100%;margin-top:12px;" onclick="openPlanSetup()">Build my plan</button>`
+          : `<div class="tiny" style="margin-top:10px;color:var(--text3);">
+               A fixed menu plans your meals ahead so they land on the menu — and log themselves —
+               without you opening the app.</div>`}`;
+  }
+
+  async function setMode(mode){
+    const prev = planMode(activePerson);
+    if (mode === prev){ renderPlanCard(); return; }
+    if (!mealPlans[activePerson]) mealPlans[activePerson] = { person:activePerson, plan:[], days:0, status:'active' };
+    mealPlans[activePerson].mode = mode;
+    renderPlanCard();
+    const r = await sheetPost({ action:'setPlanMode', person:activePerson, mode:mode });
+    if (!r || r.error || r.success === false){
+      mealPlans[activePerson].mode = prev;
+      renderPlanCard();
+      toast(/unknown action/i.test(String((r||{}).error||'')) ? 'Backend needs redeploying' : "Couldn't save that");
+      return;
+    }
+    // Switching to daily stops the plan filling the menu, but leaves today alone —
+    // pulling dinner off the menu at 4pm would strand the cook mid-afternoon.
+    if (mode === 'daily')
+      await sheetPost({ action:'clearMenuRange', person:activePerson, from:tomorrow(), source:'plan' });
+    if (mode === 'fixed' && !(mealPlans[activePerson].plan||[]).length) openPlanSetup();
+    syncAll(true);
+  }
+
+  // ── Setting one up ──
+  let planDraft = null;
+  function openPlanSetup(){
+    const p = planFor(activePerson) || {};
+    openSheet(`
+      <h2>Build a fixed menu</h2>
+      <p class="muted" style="margin:8px 0 16px;">A rotation for ${esc(activePerson)}, built from the
+        diet and favourites already on file. You can edit every meal before it goes live.</p>
+      <div class="field">
+        <label>How many days</label>
+        <div class="chips" id="ps-days">
+          ${[7,10,14].map(d=>`<button class="chip ${(+p.days||10)===d?'on':''}" onclick="pickOne(this)"
+            data-v="${d}">${d} days</button>`).join('')}
+        </div>
+      </div>
+      <div class="field">
+        <label>How soon can a dish come back</label>
+        <div class="chips" id="ps-gap">
+          ${[['6','After 6 meals'],['2','After 2 days'],['3','After 3 days'],['0','No limit']].map(([v,l])=>
+            `<button class="chip ${String(p.repeatGap==null?2:p.repeatGap)===v?'on':''}" onclick="pickOne(this)"
+              data-v="${v}">${l}</button>`).join('')}
+        </div>
+      </div>
+      <div class="field">
+        <label>Anything else? (optional)</label>
+        <input id="ps-notes" placeholder="e.g. lighter dinners, no rice at night"
+          value="${esc(p.notes||'')}">
+      </div>
+      <button class="btn-primary" style="width:100%;" onclick="generatePlan()">Generate the plan</button>
+      <div class="tiny" style="margin-top:10px;color:var(--text3);">
+        Nothing goes live until you approve it.</div>`);
+  }
+
+  async function generatePlan(){
+    const days = +picked('ps-days') || 10;
+    const gap  = +picked('ps-gap');
+    const notes = (document.getElementById('ps-notes')||{}).value || '';
+    const person = activePerson, me_ = members[person] || BLANK;
+    openSheet(`<h2>Building the plan</h2>
+      <div class="muted" style="margin-top:12px;">Working through ${days} days<span class="dots"></span></div>`);
+    try {
+      const known = repertoire(25);
+      const gapLine = gap ? `No dish may repeat within ${gap === 6 ? '6 meals' : gap + ' days'}.`
+                          : 'Repeats are fine.';
+      const r = await askJSON(
+        `Build a ${days}-day home meal plan for ${person} in a North Indian household with a cook.\n` +
+        `Diet: ${me_.diet}. Likes: ${me_.likes||'—'}. Dislikes: ${me_.dislikes||'—'}. ` +
+        `Allergies: ${me_.allergies||'None'}. Favourites: ${me_.favourites||'—'}.\n` +
+        `Daily targets: ${me_.cal} kcal, ${me_.protein} g protein, ${me_.fiber} g fibre.\n` +
+        (known.length ? `The cook already makes these — prefer them: ${known.join(', ')}.\n` : '') +
+        (notes ? `Also: ${notes}\n` : '') +
+        `${gapLine}\n` +
+        `Rules: everyday North Indian home cooking, names the household would actually say, ` +
+        `nothing needing a special appliance or unusual ingredient, no fusion or restaurant dishes, ` +
+        `no invented names. Breakfast quick and protein-led, lunch the fullest meal, snack small, ` +
+        `dinner lighter and easier to digest. Snack may be an empty string if not needed.\n` +
+        `Return an array of exactly ${days} objects: {day, breakfast, lunch, snack, dinner} ` +
+        `where day is 1-based. Dish names only, no descriptions.`, 2200);
+      if (!Array.isArray(r) || !r.length) throw new Error('empty');
+      planDraft = {
+        person: person, days: days, repeatGap: gap, notes: notes,
+        startDate: today(),
+        plan: r.slice(0, days).map((d,i)=>({ day:i,
+          slots:{ breakfast:String(d.breakfast||''), lunch:String(d.lunch||''),
+                  snack:String(d.snack||''), dinner:String(d.dinner||'') } }))
+      };
+      openPlanEditor(true);
+    } catch(e){
+      openSheet(`<h2>Couldn't build the plan</h2>
+        <p class="muted" style="margin:8px 0 16px;">The generator didn't come back with a usable plan.
+          Nothing has changed.</p>
+        <button class="btn-primary" style="width:100%;" onclick="openPlanSetup()">Try again</button>`);
+    }
+  }
+
+  // ── Reviewing and editing ──
+  let planDayIdx = 0;
+  function openPlanEditor(isDraft){
+    const src = isDraft ? planDraft : planFor(activePerson);
+    if (!src || !src.plan || !src.plan.length){ toast('No plan yet'); return; }
+    planDraft = isDraft ? planDraft : JSON.parse(JSON.stringify(src));
+    planDayIdx = Math.min(planDayIdx, planDraft.plan.length - 1);
+    renderPlanEditor(!!isDraft);
+  }
+
+  function renderPlanEditor(isDraft){
+    const p = planDraft, d = p.plan[planDayIdx];
+    const label = (i)=>{
+      const date = addDays(p.startDate || today(), i);
+      const wd = new Intl.DateTimeFormat('en-GB',{weekday:'short',timeZone:'Asia/Kolkata'})
+                   .format(new Date(date + 'T06:00:00Z'));
+      return wd;
+    };
+    openSheet(`
+      <h2>${isDraft ? 'Your plan' : 'Edit the plan'}</h2>
+      <p class="muted" style="margin:8px 0 14px;">${isDraft
+        ? 'Change anything that doesn\'t suit. It goes live from your next meal.'
+        : 'Edits here change the rotation from here on.'}</p>
+      <div class="chips" style="gap:6px;overflow-x:auto;flex-wrap:nowrap;padding-bottom:4px;">
+        ${p.plan.map((_,i)=>`<button class="chip ${i===planDayIdx?'on':''}" style="flex:0 0 auto;"
+          onclick="setPlanDay(${i})">${esc(label(i))} ${i+1}</button>`).join('')}
+      </div>
+      <div style="margin-top:14px;">
+        ${['breakfast','lunch','snack','dinner'].map(sl=>`
+          <div class="field">
+            <label>${cap(sl)}</label>
+            <input id="pe-${sl}" value="${esc(d.slots[sl]||'')}"
+              placeholder="${sl==='snack'?'Leave blank to skip':'Dish name'}"
+              oninput="updatePlanSlot(${jsAttr(sl)}, this.value)">
+          </div>`).join('')}
+      </div>
+      <div class="btn-row" style="margin-top:16px;">
+        ${isDraft ? `<button onclick="openPlanSetup()">Start over</button>` : ''}
+        <button class="btn-primary" onclick="approvePlan()">${isDraft ? 'Approve & go live' : 'Save changes'}</button>
+      </div>`);
+  }
+  function setPlanDay(i){ planDayIdx = i; renderPlanEditor(true); }
+  function updatePlanSlot(slot, val){
+    if (planDraft && planDraft.plan[planDayIdx]) planDraft.plan[planDayIdx].slots[slot] = val;
+  }
+
+  // ── Going live ──
+  // Materialises the template into Menu rows from the next meal onward. Slots that
+  // have already passed today are skipped rather than backdated — a plan approved at
+  // 9pm shouldn't invent a breakfast nobody ate and then log it.
+  async function approvePlan(){
+    const p = planDraft;
+    if (!p){ closeSheet(); return; }
+    const person = p.person || activePerson;
+    // repeatPlan deliberately starts the next rotation the day after this one ends,
+    // so a future startDate is honoured rather than reset to today.
+    if (!p.startDate || p.startDate <= today()) p.startDate = today();
+    const h = istHour();
+    const items = [];
+    p.plan.forEach((d,i)=>{
+      const date = addDays(p.startDate, i);
+      ['breakfast','lunch','snack','dinner'].forEach(sl=>{
+        const dish = String(d.slots[sl]||'').trim();
+        if (!dish) return;
+        if (date === today() && h >= slotEndHour(sl)) return;   // that meal is already over
+        items.push({ dish:dish, date:date, slot:sl, person:person, source:'plan' });
+      });
+    });
+    closeSheet();
+    if (!items.length){ toast('Nothing left to schedule today'); return; }
+
+    toast('Putting it on the menu…');
+    // Replace this person's future plan rows first, so re-approving doesn't stack
+    // two plans on top of each other. Manual picks (source 'pick'/'join') survive.
+    await sheetPost({ action:'clearMenuRange', person:person, from:today(), source:'plan' });
+    const saved = await sheetPost({ action:'saveMealPlan', person:person, mode:'fixed',
+      startDate:p.startDate, days:p.plan.length, repeatGap:p.repeatGap, notes:p.notes,
+      plan:p.plan, status:'active' });
+    const added = await sheetPost({ action:'addMenuItems', addedBy:person, items:items });
+    if (!saved || saved.error || !added || added.error){
+      toast(/unknown action/i.test(String((saved||added||{}).error||''))
+        ? 'Backend needs redeploying' : "Couldn't save the plan");
+      return;
+    }
+    mealPlans[person] = { person:person, mode:'fixed', startDate:p.startDate, days:p.plan.length,
+                          repeatGap:p.repeatGap, notes:p.notes, plan:p.plan, status:'active' };
+    settings.planPromptedOn = '';
+    saveLocal();
+    await syncAll(true);
+    toast(`${p.plan.length}-day menu is live`);
+    suggestPlanShopping(items);
+  }
+
+  // ── What to buy for it ──
+  // The plan's real second job: knowing on Sunday what Thursday needs. Deliberately
+  // a suggestion against the shopping list, not an automatic inventory deduction —
+  // without an ingredient catalog (not built, by design), silently subtracting
+  // guessed quantities would corrupt the kitchen in a way nobody would notice.
+  async function suggestPlanShopping(items){
+    const dishes = [...new Set(items.slice(0, 40).map(i=>i.dish))];
+    if (!dishes.length) return;
+    openSheet(`<h2>What this plan needs</h2>
+      <div class="muted" style="margin-top:12px;">Checking the kitchen<span class="dots"></span></div>`);
+    try {
+      const r = await askJSON(
+        `A North Indian household has planned these dishes over the coming days:\n${dishes.join(', ')}.\n` +
+        `The kitchen currently has: ${inventory.map(i=>i.name+' ('+i.qty+')').join(', ') || 'nothing'}.\n` +
+        `Return an array of {item, qty, cat} for staples that are missing or will run out. ` +
+        `8-14 items, Indian groceries, cat from: Proteins, Vegetables, Dairy & bread, Grains, ` +
+        `Fruits, Spices, Oils & condiments, Beverages.`, 700);
+      if (!Array.isArray(r) || !r.length){ closeSheet(); return; }
+      const byCat = {};
+      r.forEach(i=>{ (byCat[i.cat||'Other'] = byCat[i.cat||'Other']||[]).push(i); });
+      lastShopList = byCat;
+      openSheet(`
+        <h2>What this plan needs</h2>
+        <p class="muted" style="margin:8px 0 4px;">Not in the kitchen for the days ahead.</p>
+        <div style="margin-top:10px;">${Object.entries(byCat).map(([c,list])=>
+          `<div class="eyebrow" style="margin:14px 0 6px;">${esc(c)}</div>` +
+          list.map(i=>`<div class="row" style="padding:7px 0;border-bottom:0.5px solid var(--border);">
+            <span>${esc(i.item)}</span><span class="mono tiny">${esc(i.qty)}</span></div>`).join('')).join('')}</div>
+        <div class="btn-row" style="margin-top:16px;">
+          <button onclick="closeSheet()">Later</button>
+          <button class="btn-primary" onclick="saveShopImage()">Save the list</button>
+        </div>`);
+    } catch(e){ closeSheet(); }
+  }
+
+  // ── Running out ──
+  // Asked at N-2 rather than on the last day, so there's time to change it without
+  // a gap. Only the person whose plan it is gets asked, and only once a day.
+  function planRunningOut(){
+    if (planMode(activePerson) !== 'fixed') return null;
+    const p = planFor(activePerson);
+    const left = planDaysLeft(p);
+    if (!p || !p.plan || !p.plan.length) return null;
+    if (left > 2) return null;
+    if (settings.planPromptedOn === today()) return null;
+    return { p:p, left:left };
+  }
+  function maybePromptPlanRenewal(){
+    const st = planRunningOut();
+    if (!st) return;
+    settings.planPromptedOn = today();
+    saveLocal();
+    openSheet(`
+      <h2>${st.left ? `${st.left} day${st.left>1?'s':''} left on your menu` : 'Your menu has run out'}</h2>
+      <p class="muted" style="margin:8px 0 16px;">${st.left
+        ? 'Repeat the same rotation, adjust it, or start fresh.'
+        : 'Nothing is being planned or logged for you right now.'}</p>
+      <button class="btn-primary" style="width:100%;" onclick="repeatPlan()">Repeat this plan</button>
+      <button style="width:100%;margin-top:9px;" onclick="openPlanEditor(false)">Change a few meals</button>
+      <button style="width:100%;margin-top:9px;" onclick="openPlanSetup()">Build a fresh plan</button>
+      <button class="btn-ghost" style="width:100%;margin-top:9px;font-size:13px;"
+        onclick="closeSheet()">Not now</button>`);
+  }
+  async function repeatPlan(){
+    const p = planFor(activePerson);
+    if (!p){ closeSheet(); return; }
+    planDraft = JSON.parse(JSON.stringify(p));
+    // Restarting from the day after the current plan ends, so the two don't overlap.
+    const last = planLastDate(p);
+    planDraft.startDate = (last && last >= today()) ? addDays(last, 1) : today();
+    await approvePlan();
   }
 
   // The evening nudge. Checked on the spot, a soak instruction always loses to
@@ -1114,11 +1823,96 @@
     const meals = eatenToday();
     const box = document.getElementById('t-eaten');
     if (!meals.length){ box.innerHTML = `<div class="muted">Nothing yet today.</div>`; return; }
+    // Auto-logged meals are marked. A number that appeared without anyone tapping
+    // anything has to be visibly correctable, or the macro card stops being trusted
+    // the first time it's wrong — and it will sometimes be wrong.
     box.innerHTML = meals.map(m=>
       `<div class="row" style="padding:7px 0;border-bottom:0.5px solid var(--border);">
-        <span>${esc(m.dish)}</span>
-        <span class="tiny">${esc(m.type||'')}</span>
+        <span style="flex:1;min-width:0;">${esc(m.dish)}
+          ${m.source==='auto'?'<span class="tiny" style="color:var(--text3);"> · auto</span>':''}</span>
+        <span style="display:flex;align-items:center;gap:9px;flex:0 0 auto;">
+          <span class="tiny">${esc(m.type||'')}</span>
+          ${m.logId ? `<button class="btn-ghost" style="padding:2px 6px;min-height:0;font-size:13px;color:var(--text3);"
+            onclick="editMeal(${jsAttr(m.logId)})" aria-label="Edit ${esc(m.dish)}">Edit</button>` : ''}
+        </span>
       </div>`).join('');
+  }
+
+  // ── Editing a logged meal ──
+  // A pending (not yet written) meal has no LogID, so it can only be undone via the
+  // toast; anything already in the Sheet is editable here. Both paths matter: the
+  // sweep writes straight to the Sheet, so an auto-logged meal is always editable.
+  function editMeal(logId){
+    const m = mealLog.find(x => x.logId === logId);
+    if (!m){ toast('That meal has already changed'); return; }
+    const everyone = Object.keys(members);
+    openSheet(`
+      <h2>Edit this meal</h2>
+      <p class="muted" style="margin:8px 0 16px;">${m.source==='auto'
+        ? 'This was logged automatically from the menu.' : 'Change what was recorded, or remove it.'}</p>
+      <div class="field">
+        <label>Dish</label>
+        <input id="em-dish" value="${esc(m.dish)}">
+      </div>
+      <div class="field">
+        <label>Who ate it</label>
+        <div class="chips" id="em-who">
+          ${everyone.map(n=>`<button class="chip ${n===m.by?'on':''}" onclick="pickOne(this)"
+            data-v="${esc(n)}">${esc(n)}</button>`).join('')}
+        </div>
+      </div>
+      <div class="field">
+        <label>When</label>
+        <div class="chips" id="em-slot">
+          ${['breakfast','lunch','snack','dinner'].map(s=>
+            `<button class="chip ${s===String(m.type||'').toLowerCase()?'on':''}" onclick="pickOne(this)"
+              data-v="${s}">${cap(s)}</button>`).join('')}
+        </div>
+      </div>
+      <div class="btn-row" style="margin-top:16px;">
+        <button style="color:var(--mirch);border-color:var(--mirch);"
+          onclick="deleteMeal(${jsAttr(logId)})">Remove</button>
+        <button class="btn-primary" onclick="saveMealEdit(${jsAttr(logId)})">Save</button>
+      </div>`);
+  }
+
+  async function saveMealEdit(logId){
+    const dish = (document.getElementById('em-dish')||{}).value;
+    const who  = picked('em-who');
+    const slot = picked('em-slot');
+    closeSheet();
+    const idx = mealLog.findIndex(x => x.logId === logId);
+    const snapshot = idx >= 0 ? Object.assign({}, mealLog[idx]) : null;
+    if (idx >= 0) Object.assign(mealLog[idx], {
+      dish: dish || mealLog[idx].dish, by: who || mealLog[idx].by, type: slot || mealLog[idx].type });
+    renderToday();
+    const r = await sheetPost({ action:'updateMealLog', logId:logId,
+                                mealName:dish, loggedBy:who, mealType:slot });
+    if (!r || r.error || r.success === false){
+      if (idx >= 0 && snapshot) mealLog[idx] = snapshot;
+      renderToday();
+      toast(/unknown action/i.test(String((r||{}).error||'')) ? 'Backend needs redeploying' : "Couldn't save that");
+      return;
+    }
+    if (dish) estimateMacros(dish);
+    toast('Updated');
+    syncAll(true);
+  }
+
+  async function deleteMeal(logId){
+    closeSheet();
+    const snapshot = mealLog.slice();
+    mealLog = mealLog.filter(x => x.logId !== logId);
+    renderToday();
+    const r = await sheetPost({ action:'deleteMealLog', logId:logId });
+    if (!r || r.error || r.success === false){
+      mealLog = snapshot;
+      renderToday();
+      toast(/unknown action/i.test(String((r||{}).error||'')) ? 'Backend needs redeploying' : "Couldn't remove that");
+      return;
+    }
+    toast('Removed');
+    syncAll(true);
   }
 
   // ══════════ MEAL LOGGING ══════════
@@ -1146,6 +1940,11 @@
 
     estimateMacros(dish);
     rejected.push(dish);   // don't re-suggest what was just eaten
+    // Any dish logged by hand has settled the question its Menu row was asking, so
+    // that row is spent. This lives here rather than in the menu path alone because
+    // a quick-log chip is just as much an answer — and leaving the row open would
+    // have the sweep log the same meal a second time when the slot ended.
+    clearMenuRowsFor(dish, who, type);
     // Drop the just-eaten dish from the on-screen menu locally — free. Only
     // regenerate (a paid call) if the caller explicitly wants it, which nothing
     // currently does, so routine logging never triggers a menu API call.
@@ -1164,7 +1963,8 @@
       if (undone) return null;
       return (async () => {
         for (const person of who)
-          await sheetPost({ action:'logMeal', mealName:dish, mealType:type, loggedBy:person });
+          await sheetPost({ action:'logMeal', mealName:dish, mealType:type, loggedBy:person,
+                            source:opts.source || 'manual' });
         syncAll(true);
       })();
     });
@@ -1908,12 +2708,11 @@
       </div>` : ''}
 
       <div class="btn-row" style="margin-top:12px;">
-        <button class="btn-primary" onclick="tellCookMenu()" ${n?'':'disabled style="opacity:.5;"'}>
-          ${n>1?`Tell cook (${n})`:'Tell cook'}
+        <button class="btn-primary" onclick="addPickedToMenu()" ${n?'':'disabled style="opacity:.5;"'}>
+          ${n>1?`Add ${n} to menu`:'Add to menu'}
         </button>
-        <button style="flex:0 0 auto;padding:11px 16px;" onclick="logMenu()" ${n?'':'disabled style="opacity:.5;"'}>Log</button>
       </div>
-      ${n?'':'<div class="tiny" style="margin-top:8px;">Tick what you want made. Tap ⓘ for what a dish is and what it needs.</div>'}`;
+      ${n?'':'<div class="tiny" style="margin-top:8px;">Tick what you want made — it moves up to the menu. Tap ⓘ for what a dish is and what it needs.</div>'}`;
   }
 
   let craveOpen = false;
@@ -1961,10 +2760,15 @@
 
   // Logging the menu: each dish pre-checks the people it was tagged for, but every
   // name stays tappable so you can correct who actually ate what.
-  function logMenu(){
-    const dishes = pickedDishes();
+  function logMenu(){ logDishesFor(pickedDishes(), activeSlot()); }
+
+  // Takes an explicit list so both Cook next and the Menu card can use it. The
+  // pre-fill is the point: who a dish was tagged for is almost always who ate it,
+  // but every name stays tappable because "almost always" isn't "always".
+  function logDishesFor(dishes, slot){
     if (!dishes.length){ toast('Tick at least one dish first'); return; }
     const everyone = Object.keys(members);
+    slot = slot || activeSlot();
     openSheet(`
       <h2>Log ${dishes.length>1?'these dishes':'this'}</h2>
       <p class="muted" style="margin:8px 0 16px;">Who actually ate each? Pre-filled from the menu — tap to change.</p>
@@ -1980,7 +2784,7 @@
         <label>When</label>
         <div class="chips" id="lm-slot">
           ${['breakfast','lunch','snack','dinner'].map(s=>
-            `<button class="chip ${s===activeSlot()?'on':''}" onclick="pickOne(this)" data-v="${s}">${cap(s)}</button>`).join('')}
+            `<button class="chip ${s===slot?'on':''}" onclick="pickOne(this)" data-v="${s}">${cap(s)}</button>`).join('')}
         </div>
       </div>
       <button class="btn-primary" style="width:100%;" onclick='commitMenuLog(${jsAttr(dishes.map(d=>d.dish))})'>
@@ -1995,7 +2799,7 @@
       const el = document.getElementById('lm-'+di);
       const who = el ? [...el.querySelectorAll('.chip.on')].map(c=>c.dataset.v) : [];
       if (!who.length) continue;
-      logMeal(dishNames[di], type, who, { quiet:true, noMenuRefresh:true });
+      logMeal(dishNames[di], type, who, { quiet:true, noMenuRefresh:true, source:'menu' });
       loggedDishes.push(dishNames[di]);
     }
     closeSheet();
@@ -2096,8 +2900,11 @@
     return n === 1 ? `1 ${d.for[0]} ke liye` : `${n} logon ke liye`;
   }
 
-  async function tellCookMenu(){
-    const dishes = pickedDishes();
+  // Takes an explicit dish list so the Menu card can send the *finalised* order
+  // rather than whatever happens to be ticked on Cook next. Same shape either way:
+  // {dish, for:[names]} is all a portion order has ever needed.
+  async function tellCookMenu(explicit){
+    const dishes = explicit && explicit.length ? explicit : pickedDishes();
     if (!dishes.length){ toast('Tick at least one dish'); return; }
     const lang = LANGS[settings.cookLang] || LANGS.hi;
 
@@ -2132,6 +2939,13 @@
   }
 
   let lastCook = null, teachLines = [], teachTitle = '';
+  // The order on screen is what got cooked — not whatever happens to still be ticked
+  // on Cook next, which may be nothing at all when the sheet was opened from the Menu.
+  function logFromCookSheet(){
+    const d = (lastCook && lastCook.dishes) || [];
+    if (!d.length){ logMenu(); return; }
+    logDishesFor(d, activeSlot());
+  }
   function renderCookSheet(title, lang, dishes, opts){
     lastCook = { title, lang, dishes, opts };
     const voiceOK = supportsVoice(lang.voice);
@@ -2174,7 +2988,7 @@
         <button onclick='shareCard(${jsAttr(title)})'>Send as card</button>
         <button onclick='copyText(${jsAttr(title + "\n" + orderLines.map(l=>"• "+l).join("\n"))})'>Copy</button>
       </div>
-      <button class="btn-primary" style="width:100%;margin-top:10px;" onclick="logMenu()">Cooked it — log now</button>
+      <button class="btn-primary" style="width:100%;margin-top:10px;" onclick="logFromCookSheet()">Cooked it — log now</button>
       <div class="tiny" style="margin-top:10px;">
         Phones can't save spoken audio as a file, so there's no voice note to send.
         Read it aloud here, or send the card.
@@ -2559,6 +3373,7 @@
   }
 
   function renderYou(){
+    renderPlanCard();
     const p = me();
     document.getElementById('y-who').innerHTML = Object.keys(members).map(n=>
       `<button class="chip ${n===activePerson?'on':''}" onclick="setPerson(${jsAttr(n)})">${esc(n)}</button>`).join('');
@@ -3119,6 +3934,9 @@
     // Cost the last few dishes so the day bar has something real to show.
     const recent = [...new Set(eatenToday().map(m=>m.dish))].slice(0,5);
     for (const d of recent) await estimateMacros(d);
+    // Asked after the day is on screen, and only of the person whose plan it is —
+    // a rotation ending is their decision to make, not the household's.
+    maybePromptPlanRenewal();
   }
 
   async function init(){
