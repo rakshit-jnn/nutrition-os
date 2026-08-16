@@ -435,7 +435,7 @@
   const VISION_API = '/api/vision';
   const MODEL      = 'claude-sonnet-4-5';
   const SHEET_URL  = 'https://script.google.com/macros/s/AKfycbxXDdY5y_QUVIML1Zb4nwTnuryI_Uqhe-EGwc_iDT_s5OZ9wJNcfWvILo4rCC5bN6XT/exec';
-  const VERSION    = 'v2.8';
+  const VERSION    = 'v3.0';
   const POLL_MS    = 30000;
 
   // ══════════ STATE ══════════
@@ -821,7 +821,31 @@
     const raw = await askClaude(prompt + '\n\nRespond with JSON only. No prose, no markdown fences.', maxTokens);
     const clean = raw.replace(/```json|```/g,'').trim();
     const start = Math.min(...[clean.indexOf('{'), clean.indexOf('[')].filter(i=>i>=0));
-    return JSON.parse(clean.slice(isFinite(start)?start:0));
+    return parseLooseJSON(clean.slice(isFinite(start)?start:0));
+  }
+
+  // A long answer that hits max_tokens is cut mid-object, and JSON.parse throws — which
+  // meant a 10-day plan that came back 9.5 days long was discarded entirely and reported
+  // as "couldn't build the plan". Salvage the complete elements instead: a 9-day plan you
+  // can edit beats a failure, and the caller already tolerates a short array.
+  function parseLooseJSON(text){
+    try { return JSON.parse(text); } catch(e){}
+    if (text[0] !== '[') throw new Error('Unparseable response');
+    let depth = 0, inStr = false, escaped = false, lastComplete = -1;
+    for (let i = 0; i < text.length; i++){
+      const ch = text[i];
+      if (inStr){
+        if (escaped) escaped = false;
+        else if (ch === '\\') escaped = true;
+        else if (ch === '"') inStr = false;
+        continue;
+      }
+      if (ch === '"'){ inStr = true; continue; }
+      if (ch === '{' || ch === '[') depth++;
+      else if (ch === '}' || ch === ']'){ depth--; if (depth === 1) lastComplete = i; }
+    }
+    if (lastComplete < 0) throw new Error('Unparseable response');
+    return JSON.parse(text.slice(0, lastComplete + 1) + ']');
   }
 
   // ══════════ TODAY ══════════
@@ -1429,9 +1453,10 @@
     const out = [], idx = {};
     menuRowsFor(date, slot).forEach(m => {
       const k = m.dish.trim().toLowerCase();
-      if (idx[k] == null){ idx[k] = out.length; out.push({ dish:m.dish.trim(), for:[], rows:[] }); }
+      if (idx[k] == null){ idx[k] = out.length; out.push({ dish:m.dish.trim(), for:[], rows:[], portion:'' }); }
       const g = out[idx[k]];
       if (!g.for.includes(m.person)) g.for.push(m.person);
+      if (!g.portion && m.portion) g.portion = m.portion;
       g.rows.push(m);
     });
     return out;
@@ -1465,7 +1490,7 @@
           <div style="flex:1;min-width:0;">
             <span class="display" style="font-weight:500;font-size:16px;">${esc(g.dish)}</span>
             <div class="tiny" style="margin-top:3px;color:var(--text2);">
-              ${esc(whoLabel(g.for))}${plan?' · from your plan':''}
+              ${esc(whoLabel(g.for))}${plan?' · from your plan':''}${g.portion?' · '+esc(g.portion):''}
             </div>
           </div>
           <span style="display:flex;align-items:center;gap:8px;flex:0 0 auto;">
@@ -1585,7 +1610,7 @@
   }
 
   function menuAsDishes(){
-    return menuGrouped(menuDate(), activeSlot()).map(g => ({ dish:g.dish, for:g.for }));
+    return menuGrouped(menuDate(), activeSlot()).map(g => ({ dish:g.dish, for:g.for, portion:g.portion }));
   }
   function tellCookFromMenu(){
     const d = menuAsDishes();
@@ -1638,10 +1663,28 @@
     const p = planFor(activePerson), mode = planMode(activePerson);
     const left = mode === 'fixed' ? planDaysLeft(p) : 0;
 
-    sum.textContent = mode === 'fixed'
+    // How well the live plan actually covers the targets, stated up front rather than
+    // hidden behind the editor — it's the thing you'd want to know before relying on it.
+    let cover = '';
+    if (mode === 'fixed' && p && (p.plan||[]).length){
+      const me_ = members[activePerson] || BLANK;
+      const slotList = p.slots || Object.keys(p.plan[0].slots || {});
+      let onTarget = 0, costed = 0;
+      p.plan.forEach(d=>{
+        const t = planDayTotals(d, slotList);
+        if (t.unknown) return;
+        costed++;
+        if (Math.abs(t.kcal-me_.cal) <= me_.cal*0.08 &&
+            Math.abs(t.p-me_.protein) <= me_.protein*0.08) onTarget++;
+      });
+      cover = !costed ? ' Macros not estimated yet.'
+        : onTarget === costed ? ` All ${costed} costed days land on your targets.`
+        : ` ${onTarget} of ${costed} costed days land on your targets.`;
+    }
+    sum.textContent = (mode === 'fixed'
       ? (left ? `Fixed menu — ${left} day${left>1?'s':''} left of ${p.days}.`
               : 'Your fixed menu has run out.')
-      : 'You pick each meal yourself from Cook next.';
+      : 'You pick each meal yourself from Cook next.') + cover;
 
     body.innerHTML = `
       <div class="chips" style="gap:6px;">
@@ -1733,11 +1776,18 @@
     if (!slots.length){ toast('Pick at least one meal to plan'); return; }
     const person = activePerson, me_ = members[person] || BLANK;
     openSheet(`<h2>Building the plan</h2>
-      <div class="muted" style="margin-top:12px;">Working through ${days} days<span class="dots"></span></div>`);
+      <div class="muted" style="margin-top:12px;">Working through ${days} days<span class="dots"></span></div>
+      <div class="tiny" style="margin-top:8px;color:var(--text3);">
+        Choosing dishes, sizing the portions, then checking each day against your targets.
+        This takes a few moments.</div>`);
     try {
       const known = repertoire(25);
       const gapLine = gap ? `No dish may repeat within ${gap === 6 ? '6 meals' : gap + ' days'}.`
                           : 'Repeats are fine.';
+      // Portions and per-slot macros are what turn "aims at your targets" into something
+      // that can actually be checked. Short keys deliberately: 10 days x 4 slots x 7
+      // numbers is a lot of tokens, and a truncated plan is a broken plan.
+      const shape = `{d, pt, k, p, c, f, fb}` ;
       const r = await askJSON(
         `Build a ${days}-day home meal plan for ${person} in a North Indian household with a cook.\n` +
         `Diet: ${me_.diet}. Likes: ${tasteLine(person).likes}. Dislikes: ${tasteLine(person).avoid}. ` +
@@ -1752,18 +1802,32 @@
         `nothing needing a special appliance or unusual ingredient, no fusion or restaurant dishes, ` +
         `no invented names. Breakfast quick and protein-led, lunch the fullest meal, snack small, ` +
         `dinner lighter and easier to digest.\n` +
-        `Return an array of exactly ${days} objects: {day, ${slots.join(', ')}} ` +
-        `where day is 1-based. Dish names only, no descriptions.`, 2200);
+        `EVERY DAY MUST ADD UP to roughly the daily targets above — within about 5% on ` +
+        `calories and protein. Size the portions to make that true rather than picking ` +
+        `bigger dishes. Do the arithmetic before you answer.\n` +
+        `Return an array of exactly ${days} objects: {day, ${slots.map(sl=>sl+': '+shape).join(', ')}} ` +
+        `where day is 1-based and each slot is an object:\n` +
+        `  d  = dish name (no description)\n` +
+        `  pt = portion for ONE person, with numbers and Indian units ` +
+        `(e.g. "2 roti + 1 katori dal", "1 plate, ~200 g", "3 eggs")\n` +
+        `  k, p, c, f, fb = calories, protein, carbs, fat, fibre in grams for THAT portion`,
+        Math.min(8000, 700 + days * slots.length * 90));
       if (!Array.isArray(r) || !r.length) throw new Error('empty');
       planDraft = {
         person: person, days: days, repeatGap: gap, notes: notes, slots: slots,
         startDate: today(),
         plan: r.slice(0, days).map((d,i)=>{
           const out = {};
-          slots.forEach(sl => out[sl] = String(d[sl] || ''));
+          slots.forEach(sl => out[sl] = normalisePlanSlot(d[sl]));
           return { day:i, slots:out };
         })
       };
+      // Nothing so far has verified the arithmetic — the model was *told* the targets,
+      // which is not the same as hitting them. Check, and give it one chance to fix the
+      // days that miss. One repair pass, not a loop: a second call is worth it, a
+      // fifth is just spending money to chase a number that is an estimate anyway.
+      await ensurePlanPortions(person, slots);
+      await repairPlanDays(person, slots);
       openPlanEditor(true);
     } catch(e){
       openSheet(`<h2>Couldn't build the plan</h2>
@@ -1771,6 +1835,152 @@
           Nothing has changed.</p>
         <button class="btn-primary" style="width:100%;" onclick="openPlanSetup()">Try again</button>`);
     }
+  }
+
+  // ── Portions and arithmetic ──
+  // A plan slot is {dish, portion, kcal, p, c, f, fib}. Plans written before portions
+  // existed stored a bare string, so every read goes through here and old plans keep
+  // working — they simply have no macros until the dish is re-costed.
+  function normalisePlanSlot(v){
+    if (v == null) return { dish:'', portion:'' };
+    if (typeof v === 'string') return { dish:v.trim(), portion:'' };
+    const num = (x)=> (x==null || x==='' || isNaN(+x)) ? null : Math.round(+x);
+    return {
+      dish: String(v.d || v.dish || '').trim(),
+      portion: String(v.pt || v.portion || '').trim(),
+      kcal: num(v.k != null ? v.k : v.kcal),
+      p:    num(v.p != null ? v.p : v.protein),
+      c:    num(v.c != null ? v.c : v.carbs),
+      f:    num(v.f != null ? v.f : v.fat),
+      fib:  num(v.fb != null ? v.fb : v.fib)
+    };
+  }
+  function planSlotDish(v){ return normalisePlanSlot(v).dish; }
+
+  // Totals for one planned day. Falls back to the shared dish library when the plan
+  // itself has no numbers for a slot (an old plan, or a dish edited by hand), and
+  // reports how many slots it couldn't cost — an unknown must never read as a zero,
+  // or a half-costed day looks like a day you barely ate.
+  function planDayTotals(day, slotList){
+    const t = { kcal:0, p:0, c:0, f:0, fib:0, unknown:0, fibUnknown:0 };
+    (slotList || Object.keys(day.slots)).forEach(sl=>{
+      const s = normalisePlanSlot(day.slots[sl]);
+      if (!s.dish) return;
+      let src = s;
+      if (s.kcal == null){
+        const e = dishMacros[s.dish.toLowerCase()];
+        if (e) src = { kcal:e.kcal, p:e.p, c:e.c, f:e.f, fib:e.fib };
+        else { t.unknown++; return; }
+      }
+      t.kcal += +src.kcal || 0; t.p += +src.p || 0;
+      t.c += +src.c || 0; t.f += +src.f || 0;
+      if (src.fib == null) t.fibUnknown++; else t.fib += +src.fib;
+    });
+    return t;
+  }
+
+  // Which days miss badly enough to be worth a second call.
+  function offTargetDays(person, slotList){
+    const me_ = members[person] || BLANK;
+    const out = [];
+    (planDraft.plan||[]).forEach((d,i)=>{
+      const t = planDayTotals(d, slotList);
+      if (t.unknown) return;                      // can't judge a day we couldn't cost
+      const kOff = Math.abs(t.kcal - me_.cal) / Math.max(1, me_.cal);
+      const pOff = Math.abs(t.p - me_.protein) / Math.max(1, me_.protein);
+      if (kOff > 0.12 || pOff > 0.12)
+        out.push({ i:i, kcal:t.kcal, p:t.p });
+    });
+    return out;
+  }
+
+  async function repairPlanDays(person, slotList){
+    const off = offTargetDays(person, slotList);
+    if (!off.length) return;
+    const me_ = members[person] || BLANK;
+    try {
+      const r = await askJSON(
+        `These planned days miss the daily target of ${me_.cal} kcal and ${me_.protein} g protein:\\n` +
+        off.map(o=>{
+          const d = planDraft.plan[o.i];
+          return `Day ${o.i+1} (currently ${o.kcal} kcal, ${o.p} g protein): ` +
+            slotList.map(sl=>{
+              const s = normalisePlanSlot(d.slots[sl]);
+              return s.dish ? `${sl}: ${s.dish} — ${s.portion||'no portion'}` : '';
+            }).filter(Boolean).join('; ');
+        }).join('\\n') + '\\n' +
+        `Fix each day so it lands within 5% of both targets. Prefer changing the PORTION ` +
+        `sizes; swap a dish only if portions alone can't do it. Keep the same everyday ` +
+        `North Indian home cooking.\\n` +
+        `Return an array of {day, ${slotList.map(sl=>sl+': {d, pt, k, p, c, f, fb}').join(', ')}} ` +
+        `for ONLY the days listed, where day is the 1-based number shown above.`,
+        Math.min(6000, 500 + off.length * slotList.length * 90));
+      if (!Array.isArray(r)) return;
+      r.forEach(fix=>{
+        const idx = (+fix.day || 0) - 1;
+        if (!planDraft.plan[idx]) return;
+        slotList.forEach(sl=>{
+          if (fix[sl]) planDraft.plan[idx].slots[sl] = normalisePlanSlot(fix[sl]);
+        });
+      });
+    } catch(e){ /* the plan is still usable; the editor will show what it misses */ }
+  }
+
+  // Portions are guaranteed here, not hoped for. The plan call is asked for them, but a
+  // model under token pressure across 40 slots will quietly fall back to bare dish names,
+  // and then the portion boxes render empty and the whole feature looks broken. This is
+  // the backstop: collect every slot still missing a portion or a cost, dedupe by dish,
+  // and price them in one small focused call where there is plenty of room to answer.
+  async function ensurePlanPortions(person, slotList){
+    if (!planDraft || !planDraft.plan) return;
+    const need = {};
+    planDraft.plan.forEach(d=>{
+      (slotList || Object.keys(d.slots)).forEach(sl=>{
+        const s = normalisePlanSlot(d.slots[sl]);
+        if (!s.dish) return;
+        if (s.portion && s.kcal != null) return;
+        need[s.dish] = 1;
+      });
+    });
+    const dishes = Object.keys(need);
+    if (!dishes.length) return;
+
+    const me_ = members[person] || BLANK;
+    const priced = {};
+    // Chunked, because one call listing 40 dishes hits the same truncation wall the
+    // plan call did. Capped at three so a pathological plan can't spend forever.
+    for (let i = 0; i < dishes.length && i < 54; i += 18){
+      const chunk = dishes.slice(i, i + 18);
+      try {
+        const r = await askJSON(
+          `For each dish below, give a sensible single-person portion for someone eating ` +
+          `about ${me_.cal} kcal and ${me_.protein} g protein a day, and the macros for ` +
+          `THAT portion.\n${chunk.join('\n')}\n` +
+          `Portions must use Indian household units with a number ` +
+          `("2 roti + 1 katori dal", "1 plate, ~200 g", "3 eggs").\n` +
+          `Return an array of {d, pt, k, p, c, f, fb} — dish, portion, then calories, ` +
+          `protein, carbs, fat and fibre in grams.`, 1600);
+        (Array.isArray(r) ? r : []).forEach(x=>{
+          const s = normalisePlanSlot(x);
+          if (s.dish) priced[s.dish.toLowerCase()] = s;
+        });
+      } catch(e){ /* keep whatever priced so far — a partial fill still helps */ }
+    }
+
+    // Fill only the gaps. A slot the plan already costed is left exactly as it was.
+    planDraft.plan.forEach(d=>{
+      (slotList || Object.keys(d.slots)).forEach(sl=>{
+        const s = normalisePlanSlot(d.slots[sl]);
+        if (!s.dish) return;
+        const fix = priced[s.dish.toLowerCase()];
+        if (!fix) return;
+        if (!s.portion) s.portion = fix.portion;
+        if (s.kcal == null){
+          s.kcal = fix.kcal; s.p = fix.p; s.c = fix.c; s.f = fix.f; s.fib = fix.fib;
+        }
+        d.slots[sl] = s;
+      });
+    });
   }
 
   // ── Reviewing and editing ──
@@ -1785,6 +1995,40 @@
 
   function renderPlanEditor(isDraft){
     const p = planDraft, d = p.plan[planDayIdx];
+    const slotList = p.slots || Object.keys(d.slots);
+    // The honest bit. The plan was told the targets; this is where you find out whether
+    // it hit them, per day, before anything goes live. An uncosted slot is reported as
+    // uncosted rather than counted as zero.
+    const me_ = members[p.person || activePerson] || BLANK;
+    const t = planDayTotals(d, slotList);
+    // True when the plan predates portions (or a costing pass failed) — every slot has
+    // a dish and none has an amount.
+    const missingPortions = (p.plan||[]).some(day =>
+      slotList.some(sl => {
+        const sv = normalisePlanSlot(day.slots[sl]);
+        return sv.dish && !sv.portion;
+      }));
+    const kOff = t.kcal - me_.cal, pOff = t.p - me_.protein;
+    const near = (v, target)=> Math.abs(v) <= Math.max(1, target) * 0.08;
+    const col = (near(kOff, me_.cal) && near(pOff, me_.protein)) ? 'var(--dhania)' : 'var(--haldi)';
+    const totalsLine = `
+      <div style="margin-top:6px;padding:10px 11px;border-radius:10px;
+        background:var(--surface2);border-left:2px solid ${col};">
+        <div class="mono" style="font-size:13px;">
+          ${t.kcal} / ${me_.cal} kcal &nbsp; ${t.p} / ${me_.protein} g protein
+          ${t.fibUnknown ? '' : ` &nbsp; ${t.fib} / ${me_.fiber||BLANK.fiber} g fibre`}
+        </div>
+        <div class="tiny" style="margin-top:4px;color:var(--text2);">
+          ${t.unknown ? `${t.unknown} dish${t.unknown>1?'es':''} on this day couldn't be costed — this total is incomplete. `
+            : (near(kOff, me_.cal) && near(pOff, me_.protein))
+              ? 'This day lands on your targets.'
+              : `${kOff>0?'+':''}${kOff} kcal, ${pOff>0?'+':''}${pOff} g protein against target.`}
+          ${t.fibUnknown ? `Fibre not estimated for ${t.fibUnknown} dish${t.fibUnknown>1?'es':''}.` : ''}
+        </div>
+        <div class="tiny" style="margin-top:6px;color:var(--text3);">
+          These are estimates, not measurements — correct any dish in You &rsaquo; Dish database
+          and it stops being a guess.</div>
+      </div>`;
     const label = (i)=>{
       const date = addDays(p.startDate || today(), i);
       const wd = new Intl.DateTimeFormat('en-GB',{weekday:'short',timeZone:'Asia/Kolkata'})
@@ -1801,22 +2045,70 @@
           onclick="setPlanDay(${i})">${esc(label(i))} ${i+1}</button>`).join('')}
       </div>
       <div style="margin-top:14px;">
-        ${(p.slots||Object.keys(d.slots)).map(sl=>`
+        ${slotList.map(sl=>{
+          const sv = normalisePlanSlot(d.slots[sl]);
+          return `
           <div class="field">
             <label>${cap(sl)}</label>
-            <input id="pe-${sl}" value="${esc(d.slots[sl]||'')}"
+            <input id="pe-${sl}" value="${esc(sv.dish)}"
               placeholder="Dish name — leave blank to skip this one"
               oninput="updatePlanSlot(${jsAttr(sl)}, this.value)">
-          </div>`).join('')}
+            <div class="tiny" style="margin:8px 0 3px;color:var(--text2);">How much, for one person</div>
+            <input id="pe-pt-${sl}" value="${esc(sv.portion)}"
+              placeholder="e.g. 2 roti + 1 katori dal"
+              oninput="updatePlanPortion(${jsAttr(sl)}, this.value)">
+            <div class="tiny mono" style="margin-top:5px;color:var(--text3);">
+              ${sv.kcal!=null ? `${sv.kcal} kcal · ${sv.p||0} g protein for this portion`
+                              : 'not costed yet'}</div>
+          </div>`;}).join('')}
       </div>
+      ${totalsLine}
+      ${missingPortions ? `<button style="width:100%;margin-top:10px;" onclick="fillPlanPortions()">
+        Work out the portions for this plan</button>
+        <div class="tiny" style="margin-top:6px;color:var(--text3);">
+          This plan was made before portions existed, so it only has dish names.</div>` : ''}
       <div class="btn-row" style="margin-top:16px;">
         ${isDraft ? `<button onclick="openPlanSetup()">Start over</button>` : ''}
         <button class="btn-primary" onclick="approvePlan()">${isDraft ? 'Approve & go live' : 'Save changes'}</button>
       </div>`);
   }
+
+  // An older plan has dish names and nothing else. Rather than silently showing empty
+  // boxes — which is what "I can't see the portions" looked like — say why, and offer
+  // the one action that fixes it.
+  async function fillPlanPortions(){
+    const p = planDraft;
+    if (!p) return;
+    openSheet(`<h2>Working out portions</h2>
+      <div class="muted" style="margin-top:12px;">Sizing each dish to your targets<span class="dots"></span></div>`);
+    await ensurePlanPortions(p.person || activePerson, p.slots || null);
+    renderPlanEditor(true);
+  }
   function setPlanDay(i){ planDayIdx = i; renderPlanEditor(true); }
+  // Changing the dish invalidates the macros that were costed for the old one. Rather
+  // than keep stale numbers (which would quietly lie in the day total), they're dropped
+  // and re-looked-up from the library; if that doesn't know it either, the slot reads
+  // "not costed yet" and the day total says so out loud.
   function updatePlanSlot(slot, val){
-    if (planDraft && planDraft.plan[planDayIdx]) planDraft.plan[planDayIdx].slots[slot] = val;
+    const d = planDraft && planDraft.plan[planDayIdx];
+    if (!d) return;
+    const cur = normalisePlanSlot(d.slots[slot]);
+    const name = String(val||'').trim();
+    if (name.toLowerCase() === cur.dish.toLowerCase()){ cur.dish = name; d.slots[slot] = cur; return; }
+    const e = dishMacros[name.toLowerCase()];
+    d.slots[slot] = { dish:name, portion:cur.portion,
+      kcal: e ? e.kcal : null, p: e ? e.p : null, c: e ? e.c : null,
+      f: e ? e.f : null, fib: e ? e.fib : null };
+    clearTimeout(planTotalsTimer);
+    planTotalsTimer = setTimeout(()=>renderPlanEditor(true), 700);
+  }
+  let planTotalsTimer = null;
+  function updatePlanPortion(slot, val){
+    const d = planDraft && planDraft.plan[planDayIdx];
+    if (!d) return;
+    const cur = normalisePlanSlot(d.slots[slot]);
+    cur.portion = String(val||'');
+    d.slots[slot] = cur;
   }
 
   // ── Going live ──
@@ -1835,10 +2127,11 @@
     p.plan.forEach((d,i)=>{
       const date = addDays(p.startDate, i);
       (p.slots || Object.keys(d.slots)).forEach(sl=>{
-        const dish = String(d.slots[sl]||'').trim();
-        if (!dish) return;
+        const sv = normalisePlanSlot(d.slots[sl]);
+        if (!sv.dish) return;
         if (date === today() && h >= slotEndHour(sl)) return;   // that meal is already over
-        items.push({ dish:dish, date:date, slot:sl, person:person, source:'plan' });
+        items.push({ dish:sv.dish, date:date, slot:sl, person:person,
+                     source:'plan', portion:sv.portion });
       });
     });
     closeSheet();
@@ -1863,7 +2156,32 @@
     saveLocal();
     await syncAll(true);
     toast(`${p.plan.length}-day menu is live`);
+    // Seed the shared library with the plan's own estimates for any dish it doesn't
+    // already know. Without this the plan says 520 kcal and the day card says nothing,
+    // because auto-logging reads DishLibrary, not the plan. Costs no Claude call — the
+    // numbers already came back with the plan — and the backend refuses to overwrite a
+    // hand-confirmed row, so a correction made later always wins.
+    seedLibraryFromPlan(p);
     suggestPlanShopping(items);
+  }
+
+  function seedLibraryFromPlan(p){
+    const seen = {};
+    (p.plan||[]).forEach(d=>{
+      Object.keys(d.slots||{}).forEach(sl=>{
+        const s = normalisePlanSlot(d.slots[sl]);
+        const k = s.dish.toLowerCase();
+        if (!s.dish || s.kcal == null || seen[k]) return;
+        if (dishMacros[k] && dishMacros[k].kcal) return;   // already known — leave it alone
+        seen[k] = 1;
+        dishMacros[k] = Object.assign(dishMacros[k]||{}, {
+          kcal:s.kcal, p:s.p||0, c:s.c||0, f:s.f||0,
+          fib:(s.fib==null?null:s.fib), source:'estimated' });
+        defer(()=> sheetPost({ action:'saveDishLibrary', dish:s.dish, kcal:s.kcal,
+          protein:s.p||0, carbs:s.c||0, fat:s.f||0, fiber:s.fib,
+          source:'estimated', updatedBy:p.person || activePerson }));
+      });
+    });
   }
 
   // ── What to buy for it ──
@@ -3227,9 +3545,13 @@
   let orderLines = [], speaking = false;
 
   // Portion phrasing without an API call — works even if Claude is unreachable.
+  // A planned portion is a real quantity ("2 roti + 1 katori"), which is strictly more
+  // use to the cook than a headcount — so it wins when there is one, with the headcount
+  // still appended because she cooks one pot for the table.
   function portionText(d){
     const n = d.for.length;
-    return n === 1 ? `1 ${d.for[0]} ke liye` : `${n} logon ke liye`;
+    const who = n === 1 ? `1 ${d.for[0]} ke liye` : `${n} logon ke liye`;
+    return d.portion ? `${d.portion} — ${who}` : who;
   }
 
   // Takes an explicit dish list so the Menu card can send the *finalised* order
