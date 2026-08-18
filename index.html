@@ -492,7 +492,7 @@
   const VISION_API = '/api/vision';
   const MODEL      = 'claude-sonnet-4-5';
   const SHEET_URL  = 'https://script.google.com/macros/s/AKfycbxXDdY5y_QUVIML1Zb4nwTnuryI_Uqhe-EGwc_iDT_s5OZ9wJNcfWvILo4rCC5bN6XT/exec';
-  const VERSION    = 'v3.3';
+  const VERSION    = 'v3.4';
   const POLL_MS    = 30000;
 
   // ══════════ STATE ══════════
@@ -512,6 +512,9 @@
                        city:'', region:'',
                        adventure:1, prepDismissed:'', planPromptedOn:'', ratePromptedOn:'' };
   let pendingSets  = null;
+  // True when Apps Script hasn't been redeployed yet, so the Household tab doesn't
+  // exist. Settings then behave exactly as they did before: device-local only.
+  let householdBackendMissing = false;
   let screen       = 'today';
   // The Menu: dishes that have been finalised, one row per person per dish, shared
   // across every phone in the house. Cook next is a recommendation; this is the order.
@@ -686,17 +689,61 @@
 
   // ══════════ SYNC ══════════
   let syncing = false, lastSync = null;
+  // Which settings are genuinely shared. Everything else in `settings` is device- or
+  // session-scoped (prompt dismissals, low-stock thresholds) and must NOT be synced —
+  // syncing "I dismissed the prep card today" would dismiss it on everyone's phone.
+  const HOUSEHOLD_KEYS = ['region', 'city', 'cookLang', 'cookName'];
+
+  // The dangerous case is a household that has settings locally and an empty
+  // Household tab — a naive pull would overwrite real settings with blanks. So a key
+  // the sheet has never heard of is PUSHED UP rather than pulled down, and a blank
+  // value from the sheet is treated as absent, not as an instruction to clear.
+  function applyHousehold(hh){
+    if (!hh || !hh.settings){
+      // Apps Script still on the previous version answers "unknown action". Degrade
+      // to device-local behaviour rather than blocking the whole sync.
+      householdBackendMissing = !!(hh && /unknown action/i.test(String(hh.error||'')));
+      return;
+    }
+    householdBackendMissing = false;
+    const remote = hh.settings;
+    const missing = {};
+    HOUSEHOLD_KEYS.forEach(k=>{
+      const rv = String(remote[k] == null ? '' : remote[k]).trim();
+      if (rv) settings[k] = rv;
+      else if (String(settings[k]||'').trim()) missing[k] = settings[k];
+    });
+    // `adventure` is a number, so it needs its own handling — 0 is a real value and
+    // would be lost by the truthiness check above.
+    if (remote.adventure !== undefined && String(remote.adventure).trim() !== '')
+      settings.adventure = +remote.adventure;
+    else if (settings.adventure !== undefined) missing.adventure = settings.adventure;
+
+    saveLocal();
+    if (Object.keys(missing).length) pushHousehold(missing);
+  }
+
+  function pushHousehold(partial){
+    if (householdBackendMissing) return;
+    const payload = {};
+    (partial ? Object.keys(partial) : HOUSEHOLD_KEYS.concat('adventure')).forEach(k=>{
+      payload[k] = partial ? partial[k] : settings[k];
+    });
+    defer(()=>sheetPost({ action:'saveHousehold', person:activePerson, settings:payload }));
+  }
+
   async function syncAll(silent){
     if (syncing) return;
     syncing = true;
     if (!silent) setSyncLabel('syncing…');
     try {
-      const [inv, ml, mac, prefs, wk, lib, skl, wl, mn, pl] = await Promise.all([
+      const [inv, ml, mac, prefs, wk, lib, skl, wl, mn, pl, hh] = await Promise.all([
         sheetGet('getInventory'), sheetGet('getMealLog'), sheetGet('getMacros'),
         sheetGet('getPreferences'), sheetGet('getWorkoutLog'),
         sheetGet('getDishLibrary'), sheetGet('getCookSkills'), sheetGet('getWishlist'),
-        sheetGet('getMenu'), sheetGet('getMealPlans')
+        sheetGet('getMenu'), sheetGet('getMealPlans'), sheetGet('getHousehold')
       ]);
+      applyHousehold(hh);
 
       // Same guard as the wishlist: an Apps Script still on the previous version
       // answers "unknown action", and an undefined menu must not blank the card.
@@ -4887,7 +4934,9 @@
     const regionChanged = rg && rg !== settings.region;
     if (rg) settings.region = rg;
     settings.city = (document.getElementById('ck-city').value || '').trim();
-    saveLocal(); closeSheet(); renderYou();
+    saveLocal();
+    pushHousehold();      // shared facts — the other phones need them too
+    closeSheet(); renderYou();
     lastMenuFor = null;   // the dial changes what the menu may suggest, so rebuild it
     // The region decides which food the menu may draw from at all, so a change makes
     // every page already generated answer the wrong question.
@@ -5187,6 +5236,7 @@
       if (onbData.city) settings.city = onbData.city;
       settings.cookLang = onbData.cookLang;
       saveLocal();
+      pushHousehold();
       seedTasteRail();
     }
     if (onbStep === 2 && !skip){
