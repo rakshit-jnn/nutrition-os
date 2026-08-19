@@ -492,7 +492,7 @@
   const VISION_API = '/api/vision';
   const MODEL      = 'claude-sonnet-4-5';
   const SHEET_URL  = 'https://script.google.com/macros/s/AKfycbxXDdY5y_QUVIML1Zb4nwTnuryI_Uqhe-EGwc_iDT_s5OZ9wJNcfWvILo4rCC5bN6XT/exec';
-  const VERSION    = 'v3.4';
+  const VERSION    = 'v3.5';
   const POLL_MS    = 30000;
 
   // ══════════ STATE ══════════
@@ -752,7 +752,8 @@
         // date that slipped through as a Date object would serialise in UTC and read
         // as the previous day at IST midnight — which silently empties the whole board.
         menuBoard = mn.menu.map(m => Object.assign({}, m, {
-          date: menuDay(m.date), slot: String(m.slot||'').trim().toLowerCase() }));
+          date: menuDay(m.date), slot: String(m.slot||'').trim().toLowerCase(),
+          portionFactor: m.portionFactor == null ? 1 : +m.portionFactor }));
         menuBackendMissing = false;
       } else if (mn && /unknown action/i.test(String(mn.error||''))){
         menuBackendMissing = true;
@@ -805,7 +806,9 @@
       if (ml && ml.meals)
         mealLog = ml.meals.map(m=>({ dish:m.mealName, date:toISODate(m.date), raw:m.date,
                                      by:m.loggedBy, type:m.mealType, notes:m.notes,
-                                     logId:m.logId||'', source:m.source||'manual' }));
+                                     logId:m.logId||'', source:m.source||'manual',
+                                     portion:m.portion||'',
+                                     portionFactor:m.portionFactor==null?1:+m.portionFactor }));
 
       if (mac && mac.macros && mac.macros.length){
         const live = mac.macros.map(r=>r.person);
@@ -983,18 +986,69 @@
   // sheet on sync — no longer cached in localStorage. Each entry also carries a
   // `source` ('estimated' | 'confirmed') so the UI can show which are guesses.
   let dishMacros = {};
+
+  // ══════════ PORTIONS ══════════
+  // A portion is two things at once: the text the cook is told ("2 katori"), and a
+  // multiplier on the dish's stored macros. The multiplier is derived by comparing the
+  // number in the edited portion against the number in the SUGGESTED one, which is the
+  // serving dishMacros was costed for. Deliberately conservative: if either side can't
+  // be read, or the units disagree, the factor stays 1 and the UI says the macros are
+  // unscaled — quietly guessing a multiplier would corrupt the day's totals, which is
+  // the one number in this app that has to be trustworthy.
+  function portionQty(str){
+    const t = String(str||'').trim().toLowerCase();
+    if (!t) return null;
+    // Leading quantity: "2", "1.5", "1/2", "one and a half" is not attempted.
+    // `rest` must be whatever follows the quantity TOKEN, not whatever follows the
+    // digits — otherwise "a plate" leaves the unit as "a" and refuses to scale
+    // against "2 plate", which is the most ordinary edit there is.
+    let n = null, rest = t;
+    const frac  = t.match(/^(\d+)\s*\/\s*(\d+)/);
+    const num   = t.match(/^(\d+(?:\.\d+)?)/);
+    const word  = t.match(/^(a|an|one|half|two|three|four)\b/);
+    const WORDS = { a:1, an:1, one:1, half:0.5, two:2, three:3, four:4 };
+    if (frac){ n = (+frac[1]) / (+frac[2]); rest = t.slice(frac[0].length); }
+    else if (num){ n = +num[1]; rest = t.slice(num[0].length); }
+    else if (word){ n = WORDS[word[1]]; rest = t.slice(word[0].length); }
+    if (n == null || !isFinite(n) || n <= 0) return null;
+    // The unit is the first word after the quantity, normalised loosely so "katori"
+    // and "katoris" compare equal. Comparing across different units is refused.
+    const unit = rest.replace(/^[^a-z]*/, '').replace(/s\b/g, '').trim().split(/\s+/)[0] || '';
+    return { n, unit };
+  }
+
+  const FACTOR_MAX = 10;   // a typo like "20 katori" must not report a 12,000 kcal day
+  function portionFactor(edited, baseline){
+    const a = portionQty(edited), b = portionQty(baseline);
+    if (!a || !b) return { f:1, sure:false };
+    if (a.unit !== b.unit) return { f:1, sure:false };
+    const f = a.n / b.n;
+    if (!isFinite(f) || f <= 0) return { f:1, sure:false };
+    return { f: Math.min(FACTOR_MAX, Math.round(f * 100) / 100), sure:true };
+  }
+  function scaleMacros(e, f){
+    const k = (v)=> v == null ? null : Math.round(v * f);
+    return { kcal:k(e.kcal), p:k(e.p), c:k(e.c), f:k(e.f), fib:k(e.fib) };
+  }
+  function mealFactor(m){
+    const f = m && m.portionFactor;
+    return (typeof f === 'number' && isFinite(f) && f > 0) ? Math.min(FACTOR_MAX, f) : 1;
+  }
   function estimateDay(){
     const meals = eatenToday();
     let p=0,c=0,f=0,kcal=0,fib=0,fibKnown=0,fibTotal=0;
     meals.forEach(m=>{
       const e = dishMacros[m.dish.toLowerCase()];
       if (!e) return;
-      p+=e.p; c+=e.c; f+=e.f; kcal+=e.kcal;
+      // A double portion counts double. Before this the cook served two katori and
+      // the day reported one, which is worse than not tracking it at all.
+      const mf = mealFactor(m);
+      p+=e.p*mf; c+=e.c*mf; f+=e.f*mf; kcal+=e.kcal*mf;
       fibTotal++;
       // Fibre arrived later than the other macros, so older rows genuinely don't
       // have it. Counting a blank as 0 would quietly under-report all day —
       // better to say how many dishes are missing it than to invent a number.
-      if (e.fib != null){ fib += e.fib; fibKnown++; }
+      if (e.fib != null){ fib += e.fib * mf; fibKnown++; }
     });
     return { p:Math.round(p), c:Math.round(c), f:Math.round(f), kcal:Math.round(kcal),
              fib:Math.round(fib), fibKnown, fibTotal, count:meals.length };
@@ -1020,7 +1074,7 @@
     let p=0, kcal=0;
     eatenTodayBy(person).forEach(m=>{
       const e = dishMacros[String(m.dish||'').toLowerCase()];
-      if (e){ p += e.p; kcal += e.kcal; }
+      if (e){ const mf = mealFactor(m); p += e.p*mf; kcal += e.kcal*mf; }
     });
     return { p: Math.max(0, Math.round((t.protein||0) - p)),
              kcal: Math.max(0, Math.round((t.cal||0) - kcal)),
@@ -1243,11 +1297,20 @@
 
   // Takes bare dish names so both the ticked recommendations and a hand-typed dish
   // land in exactly the same who/when sheet — one path, one set of bugs.
+  // Portion state for the open sheet. `base` is the suggested serving that dishMacros
+  // was costed for; everything is a multiple of that. `per` holds per-person overrides
+  // and stays empty unless someone opens the expander — the common case is one portion
+  // for the whole dish, and asking for four inputs would be worse than not asking.
+  let addPortions = [];
   function addDishesToMenu(names, note){
     if (!names || !names.length) return;
     const dishes = names.map(n=>({ dish:n }));
     const everyone = Object.keys(members);
     const slot = activeSlot(), date = menuDate();
+    addPortions = dishes.map(d=>{
+      const base = suggestedPortion(d.dish);
+      return { base:base, text:base, per:{}, open:false };
+    });
     openSheet(`
       <h2>Add to the menu</h2>
       <p class="muted" style="margin:8px 0 16px;">Who is each dish for? ${date===today()?'':'For tomorrow\'s '+esc(slot)+'.'}</p>
@@ -1259,6 +1322,7 @@
             ${everyone.map(n=>`<button class="chip ${n===activePerson?'on':''}"
               onclick="toggleChip(this)" data-v="${esc(n)}">${esc(n)}</button>`).join('')}
           </div>
+          <div id="am-pt-${di}" style="margin-top:8px;"></div>
         </div>`).join('')}
       <div class="field">
         <label>When</label>
@@ -1270,6 +1334,91 @@
       <button class="btn-primary" style="width:100%;" onclick='commitAddToMenu(${jsAttr(dishes.map(d=>d.dish))})'>
         Add to menu
       </button>`);
+    dishes.forEach((d,di)=>renderPortionRow(di, d.dish));
+  }
+
+  // The suggested serving. A recommendation carries one now; otherwise the library's
+  // own portion, and failing both a blank box rather than an invented number.
+  function suggestedPortion(dish){
+    const k = String(dish||'').trim().toLowerCase();
+    const fromMenu = (pages[pageIdx]||[]).find(m=>String(m.dish||'').trim().toLowerCase()===k);
+    if (fromMenu && fromMenu.portion) return String(fromMenu.portion);
+    const e = dishMacros[k];
+    return (e && e.portion) ? String(e.portion) : '';
+  }
+
+  // Rendered separately from the sheet so a keystroke can update the kcal readout
+  // without rebuilding the sheet and losing focus.
+  function renderPortionRow(di, dish){
+    const box = document.getElementById('am-pt-' + di);
+    if (!box) return;
+    const st = addPortions[di];
+    const e = dishMacros[String(dish||'').trim().toLowerCase()];
+    const everyone = Object.keys(members);
+    const fx = portionFactor(st.text, st.base);
+    // The consequence of the edit, shown as a number. Without this the multiplier is
+    // invisible and a wrong guess only surfaces days later in the totals.
+    const readout = !st.base
+      ? `<span style="color:var(--text3);">Macros count as one serving</span>`
+      : !e
+        ? `<span style="color:var(--text3);">Not costed yet — logged as written</span>`
+        : fx.sure
+          ? `<span class="mono">${Math.round(e.kcal*fx.f)} kcal · ${Math.round(e.p*fx.f)} g protein</span>` +
+            (fx.f !== 1 ? `<span style="color:var(--haldi);"> · ×${fx.f}</span>` : '')
+          : `<span class="mono">${e.kcal} kcal · ${e.p} g protein</span>` +
+            `<span style="color:var(--text3);"> · counted as one serving</span>`;
+    box.innerHTML = `
+      <div style="display:flex;gap:8px;align-items:center;">
+        <input id="am-pt-in-${di}" value="${esc(st.text)}" placeholder="How much, per person"
+          style="flex:1;" oninput="portionTyped(${di}, ${jsAttr(dish)})">
+      </div>
+      <div class="tiny" style="margin-top:5px;">${readout}</div>
+      ${everyone.length > 1 ? (st.open
+        ? `<div style="margin-top:8px;padding-top:8px;border-top:0.5px solid var(--border);">
+             ${everyone.map(n=>`
+               <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
+                 <span class="tiny" style="flex:0 0 74px;">${esc(n)}</span>
+                 <input id="am-pt-${di}-${esc(n)}" value="${esc(st.per[n]||st.text)}"
+                   placeholder="${esc(st.text||'as above')}" style="flex:1;"
+                   oninput="portionPerTyped(${di}, ${jsAttr(n)})">
+               </div>`).join('')}
+             <button class="btn-ghost" style="padding:4px 0;min-height:0;font-size:12px;"
+               onclick="togglePortionPer(${di}, ${jsAttr(dish)})">Same for everyone</button>
+           </div>`
+        : `<button class="btn-ghost" style="padding:4px 0;min-height:0;font-size:12px;"
+             onclick="togglePortionPer(${di}, ${jsAttr(dish)})">Different amount per person</button>`) : ''}`;
+  }
+
+  function portionTyped(di, dish){
+    const el = document.getElementById('am-pt-in-' + di);
+    addPortions[di].text = el ? el.value : '';
+    const st = addPortions[di];
+    // Re-rendering would steal focus mid-word, so only the readout is refreshed.
+    const box = document.getElementById('am-pt-' + di);
+    if (!box) return;
+    const line = box.querySelector('.tiny');
+    if (!line) return;
+    const e = dishMacros[String(dish||'').trim().toLowerCase()];
+    const fx = portionFactor(st.text, st.base);
+    line.innerHTML = !st.base
+      ? `<span style="color:var(--text3);">Macros count as one serving</span>`
+      : !e
+        ? `<span style="color:var(--text3);">Not costed yet — logged as written</span>`
+        : fx.sure
+          ? `<span class="mono">${Math.round(e.kcal*fx.f)} kcal · ${Math.round(e.p*fx.f)} g protein</span>` +
+            (fx.f !== 1 ? `<span style="color:var(--haldi);"> · ×${fx.f}</span>` : '')
+          : `<span class="mono">${e.kcal} kcal · ${e.p} g protein</span>` +
+            `<span style="color:var(--text3);"> · counted as one serving</span>`;
+  }
+  function portionPerTyped(di, person){
+    const el = document.getElementById('am-pt-' + di + '-' + person);
+    if (el) addPortions[di].per[person] = el.value;
+  }
+  function togglePortionPer(di, dish){
+    const st = addPortions[di];
+    st.open = !st.open;
+    if (!st.open) st.per = {};   // collapsing means "same for everyone" literally
+    renderPortionRow(di, dish);
   }
 
   async function commitAddToMenu(dishNames){
@@ -1281,7 +1430,15 @@
     dishNames.forEach((dish,di)=>{
       const el = document.getElementById('am-'+di);
       const who = el ? [...el.querySelectorAll('.chip.on')].map(c=>c.dataset.v) : [];
-      who.forEach(person => items.push({ dish:dish, date:date, slot:slot, person:person, source:'pick' }));
+      const st = addPortions[di] || { base:'', text:'', per:{} };
+      who.forEach(person => {
+        // Per-person override if one was typed, otherwise the shared portion.
+        const text = String(st.per[person] != null && String(st.per[person]).trim()
+          ? st.per[person] : st.text || '').trim();
+        const fx = portionFactor(text, st.base);
+        items.push({ dish:dish, date:date, slot:slot, person:person, source:'pick',
+                     portion:text, portionFactor:fx.f });
+      });
     });
     closeSheet();
     if (!items.length){ toast('Nobody selected — nothing added'); return; }
@@ -1632,6 +1789,86 @@
   }
   // Grouped by dish, because a dish cooked for three people is one pot, one line on
   // the cook's order, and one thing to tap — not three.
+  // Editing a portion already on the menu. Same shape as the add sheet — one amount by
+  // default, per-person if asked for — but it writes through to rows that already exist.
+  let menuPortionDish = null;
+  function openMenuPortion(dish){
+    menuPortionDish = dish;
+    const date = menuDate(), slot = activeSlot();
+    const g = menuGrouped(date, slot).find(x=>x.dish.toLowerCase()===String(dish).toLowerCase());
+    if (!g){ toast("That dish isn't on the menu"); return; }
+    const base = suggestedPortion(dish);
+    const e = dishMacros[String(dish).trim().toLowerCase()];
+    // Existing per-person amounts are read off the rows, so opening the expander
+    // shows what is actually stored rather than resetting everyone to the shared value.
+    const per = {};
+    g.rows.forEach(r=>{ if (r.portion) per[r.person] = r.portion; });
+    const mixed = new Set(g.rows.map(r=>String(r.portion||''))).size > 1;
+    addPortions = [{ base:base || g.portion || '', text:g.portion||'', per: mixed?per:{}, open:mixed }];
+    openSheet(`
+      <h2>Portion</h2>
+      <p class="muted" style="margin:8px 0 4px;">${esc(dish)} — ${esc(whoLabel(g.for))}</p>
+      ${e ? `<div class="tiny" style="margin-bottom:14px;color:var(--text3);">
+        One serving is ${e.kcal} kcal · ${e.p} g protein. Changing the amount changes
+        what gets logged.</div>`
+      : `<div class="tiny" style="margin-bottom:14px;color:var(--text3);">
+        This dish isn't costed yet, so the amount is an instruction to the cook only.</div>`}
+      <div id="am-pt-0"></div>
+      <button class="btn-primary" style="width:100%;margin-top:14px;"
+        onclick="saveMenuPortion()">Save</button>
+      <button class="btn-ghost" style="width:100%;margin-top:8px;font-size:13px;"
+        onclick="closeSheet()">Cancel</button>`);
+    renderPortionRow(0, dish);
+  }
+
+  async function saveMenuPortion(){
+    const dish = menuPortionDish;
+    const st = addPortions[0];
+    if (!dish || !st) { closeSheet(); return; }
+    const date = menuDate(), slot = activeSlot();
+    const g = menuGrouped(date, slot).find(x=>x.dish.toLowerCase()===String(dish).toLowerCase());
+    if (!g){ closeSheet(); return; }
+    closeSheet();
+
+    // One write per distinct amount: a shared portion is a single call, per-person
+    // amounts are one call each. The optimistic update mirrors exactly what is sent.
+    const writes = [];
+    if (st.open && Object.keys(st.per).length){
+      g.for.forEach(person=>{
+        const text = String(st.per[person] != null && String(st.per[person]).trim()
+          ? st.per[person] : st.text || '').trim();
+        writes.push({ person, text, f: portionFactor(text, st.base).f });
+      });
+    } else {
+      const text = String(st.text||'').trim();
+      writes.push({ person:'', text, f: portionFactor(text, st.base).f });
+    }
+
+    const snapshot = menuBoard.slice();
+    menuBoard = menuBoard.map(m=>{
+      if (m.date !== date || m.slot !== slot) return m;
+      if (String(m.dish||'').toLowerCase() !== String(dish).toLowerCase()) return m;
+      if (String(m.status||'open') !== 'open') return m;
+      const w = writes.find(x=>!x.person || x.person === m.person);
+      return w ? Object.assign({}, m, { portion:w.text, portionFactor:w.f }) : m;
+    });
+    renderMenuBoard(); renderToday();
+
+    for (const w of writes){
+      const r = await sheetPost({ action:'updateMenuPortion', date, slot, dish,
+        person:w.person, portion:w.text, portionFactor:w.f });
+      if (!r || r.error || r.success === false){
+        menuBoard = snapshot;
+        renderMenuBoard(); renderToday();
+        toast(/unknown action/i.test(String((r||{}).error||''))
+          ? 'Backend needs redeploying' : "Couldn't save that portion");
+        return;
+      }
+    }
+    toast('Portion updated');
+    syncAll(true);
+  }
+
   function menuGrouped(date, slot){
     const out = [], idx = {};
     menuRowsFor(date, slot).forEach(m => {
@@ -1673,7 +1910,11 @@
           <div style="flex:1;min-width:0;">
             <span class="display" style="font-weight:500;font-size:16px;">${esc(g.dish)}</span>
             <div class="tiny" style="margin-top:3px;color:var(--text2);">
-              ${esc(whoLabel(g.for))}${plan?' · from your plan':''}${g.portion?' · '+esc(g.portion):''}
+              ${esc(whoLabel(g.for))}${plan?' · from your plan':''}
+              · <button class="btn-ghost" style="padding:0;min-height:0;font-size:12px;
+                  color:${g.portion?'var(--haldi)':'var(--text3)'};text-decoration:underline;"
+                  onclick="openMenuPortion(${jsAttr(g.dish)})">${
+                    g.portion ? esc(g.portion) : 'set portion'}</button>
             </div>
           </div>
           <span style="display:flex;align-items:center;gap:8px;flex:0 0 auto;">
@@ -3617,16 +3858,19 @@
         `For each dish also add "hints": an object mapping each person's name to a SHORT tag of at most 4 words ` +
         `saying how much they'd like it, e.g. "You'll love this", "Might be too spicy", "Not their thing". Only ` +
         `include names who have a notable reaction.\n` +
-        `Return an array of {dish, for, why, protein, missing, hints, prep, prepHours, common} where "for" is an array of exact names ` +
+        `Return an array of {dish, for, why, protein, portion, missing, hints, prep, prepHours, common} where "for" is an array of exact names ` +
         `(from: ${Object.keys(members).join(', ')}) who would eat it, "why" is a short phrase, ` +
-        `"protein" is grams per serving as integer, "missing" is ingredients not in the kitchen, ` +
+        `"protein" is grams per serving as integer, ` +
+        `"portion" is ONE person's normal serving in Indian household units with a number in it ` +
+        `(e.g. "2 roti + 1 katori", "1 plate", "2 idli + sambar") and must describe the same serving "protein" does, ` +
+        `"missing" is ingredients not in the kitchen, ` +
         `"prep" is a short English instruction if the dish needs advance preparation such as soaking, ` +
         `marinating or fermenting (e.g. "Soak the rajma overnight") and an empty string if it needs none, ` +
         `"prepHours" is how many hours before cooking that preparation must start (0 if none), and ` +
         `"common" is true only if this is a standard everyday dish nearly every Indian home cook already knows.`, 1500);
       let newMenu = (Array.isArray(r) ? r : []).map(x=>({
         dish:x.dish, for:Array.isArray(x.for)?x.for:[activePerson],
-        why:x.why||'', protein:+x.protein||0, missing:x.missing||[],
+        why:x.why||'', protein:+x.protein||0, portion:x.portion||'', missing:x.missing||[],
         hints:x.hints&&typeof x.hints==='object'?x.hints:{}, details:null,
         prep:x.prep||'', prepHours:+x.prepHours||0, common:x.common !== false
       }));
