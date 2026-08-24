@@ -209,6 +209,11 @@
   #toast button { padding:5px 10px; min-height:0; font-size:13px; font-weight:600; color:var(--haldi); border-color:var(--border2); }
 
   .dots::after { content:''; animation:dots 1.2s steps(4,end) infinite; }
+  /* v3.13. Skeleton rows for dishes still streaming in. A static grey bar reads as
+     a broken row; the pulse is what makes it read as "coming". */
+  .shimmer { animation: shimmerPulse 1.4s ease-in-out infinite; }
+  @keyframes shimmerPulse { 0%,100% { opacity:0.35; } 50% { opacity:0.75; } }
+  @media (prefers-reduced-motion: reduce){ .shimmer { animation: none; opacity:0.5; } }
   @keyframes dots { 0%{content:'';} 25%{content:'.';} 50%{content:'..';} 75%{content:'...';} }
   .sr { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); }
   .divider { height:0.5px; background:var(--border); margin:16px 0; }
@@ -500,7 +505,7 @@
   const VISION_API = '/api/vision';
   const MODEL      = 'claude-sonnet-4-5';
   const SHEET_URL  = 'https://script.google.com/macros/s/AKfycbxXDdY5y_QUVIML1Zb4nwTnuryI_Uqhe-EGwc_iDT_s5OZ9wJNcfWvILo4rCC5bN6XT/exec';
-  const VERSION    = 'v3.9';
+  const VERSION    = 'v3.13';
   const POLL_MS    = 30000;
 
   // ══════════ STATE ══════════
@@ -625,9 +630,14 @@
     // as the slot chips being broken. It now persists until the box is cleared.
     syncCraveBox();
     rejected = [];
+    // v3.10. Stash the slot we're leaving BEFORE clearing, then try the cache for
+    // the one we're arriving at. This used to unconditionally force a fresh Claude
+    // call, so flipping breakfast → lunch → breakfast cost two full generations for
+    // a menu that had already been built.
+    cacheMenu(lastMenuFor);
     pages = []; pageIdx = 0;
     renderMenuBoard();      // the Menu follows the slot switch too — it's the same question
-    loadMenu(true);
+    loadMenu();
   }
   function mealSlot(){
     const h = istHour();
@@ -771,23 +781,40 @@
           sheetGet('getDishLibrary'), sheetGet('getCookSkills'), sheetGet('getWishlist'),
           sheetGet('getMenu'), sheetGet('getMealPlans'), sheetGet('getHousehold')
         ]);
-        const [ms0, rc0] = await Promise.all([sheetGet('getMeasures'), sheetGet('getRecipes')]);
+        const [ms0, rc0, cn0] = await Promise.all([
+          sheetGet('getMeasures'), sheetGet('getRecipes'), sheetGet('getCookNext')]);
         all = { getInventory:inv0, getMealLog:ml0, getMacros:mac0, getPreferences:prefs0,
                 getWorkoutLog:wk0, getDishLibrary:lib0, getCookSkills:skl0, getWishlist:wl0,
                 getMenu:mn0, getMealPlans:pl0, getHousehold:hh0,
-                getMeasures:ms0, getRecipes:rc0 };
+                getMeasures:ms0, getRecipes:rc0, getCookNext:cn0 };
       }
       const inv = all.getInventory, ml = all.getMealLog, mac = all.getMacros,
             prefs = all.getPreferences, wk = all.getWorkoutLog, lib = all.getDishLibrary,
             skl = all.getCookSkills, wl = all.getWishlist, mn = all.getMenu,
             pl = all.getMealPlans, hh = all.getHousehold,
-            ms = all.getMeasures, rc = all.getRecipes;
+            ms = all.getMeasures, rc = all.getRecipes, cn = all.getCookNext;
       // v3.7. Library data, so it is safe to hold in memory and re-render from.
       // A backend that predates these tabs returns undefined, which must leave the
       // previous value alone rather than blanking it — same rule as every other
       // reader here: a failed fetch is not evidence that the data is gone.
       if (ms && ms.measures) measures = ms.measures;
       if (rc && rc.recipes)  recipes  = rc.recipes;
+      // v3.12. The shared menu. Re-render if it changed under us — a flatmate
+      // adding a dish should appear without anyone reloading, which is the whole
+      // point of the list being shared rather than per-device.
+      if (cn && cn.items){
+        const before = cookNext.map(x=>x.id).join(',');
+        cookNext = cn.items;
+        if (cookNext.map(x=>x.id).join(',') !== before && pages.length){
+          const cur = sharedFor(activeSlot());
+          if (cur.length){
+            const keepIdx = pageIdx;
+            pages = pagesFromShared(cur);
+            pageIdx = Math.min(keepIdx, Math.max(0, pages.length - 1));
+            renderMenu();
+          }
+        }
+      }
       applyHousehold(hh);
 
       // Same guard as the wishlist: an Apps Script still on the previous version
@@ -968,6 +995,83 @@
   }
 
   // ══════════ CLAUDE ══════════
+  // ── Streaming (v3.13) ────────────────────────────────────────────────────
+  // The wait was never Claude thinking — it was the proxy holding the whole answer
+  // back until the last token. This reads the SSE stream and hands over each array
+  // element the moment its closing brace arrives, so the first dish appears in a
+  // couple of seconds instead of the fifth dish and the first appearing together.
+  //
+  // Falls back to the buffered endpoint on any failure, including the endpoint
+  // simply not being deployed yet. Shipping the HTML before claude-stream.mjs
+  // therefore degrades to the old speed rather than to a broken menu.
+  const STREAM_API = '/api/claude-stream';
+  let streamBroken = false;   // one failure is enough; stop retrying it all session
+
+  // Pulls complete top-level objects out of a partial JSON array. Brace counting
+  // has to respect strings and escapes or a dish whose name contains a brace, or
+  // any apostrophe-heavy `why`-style field, would split an object in half.
+  function takeCompleteObjects(buf, from){
+    const out = [];
+    let i = from, depth = 0, start = -1, inStr = false, esc = false;
+    for (; i < buf.length; i++){
+      const c = buf[i];
+      if (inStr){
+        if (esc) esc = false;
+        else if (c === '\\') esc = true;
+        else if (c === '"') inStr = false;
+        continue;
+      }
+      if (c === '"'){ inStr = true; continue; }
+      if (c === '{'){ if (depth === 0) start = i; depth++; }
+      else if (c === '}'){
+        depth--;
+        if (depth === 0 && start >= 0){
+          try { out.push(JSON.parse(buf.slice(start, i + 1))); } catch(e){}
+          start = -1;
+        }
+      }
+    }
+    // Resume from the last completed object; an object still being written must be
+    // re-scanned next time, not skipped.
+    return { objects: out, next: start >= 0 ? start : (depth === 0 ? i : from) };
+  }
+
+  async function askJSONStream(prompt, maxTokens, onObject){
+    if (streamBroken) throw new Error('stream unavailable');
+    const r = await fetch(STREAM_API, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ model:MODEL, max_tokens:maxTokens||900,
+        messages:[{ role:'user', content: prompt + '\n\nRespond with JSON only. No prose, no markdown fences.' }] })
+    });
+    if (!r.ok || !r.body){ streamBroken = true; throw new Error('stream unavailable'); }
+
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let sse = '', text = '', cursor = 0, seen = 0;
+    while (true){
+      const { done, value } = await reader.read();
+      if (done) break;
+      sse += dec.decode(value, { stream:true });
+      // SSE frames are separated by a blank line; a partial frame stays in the
+      // buffer rather than being parsed as though it were whole.
+      let cut;
+      while ((cut = sse.indexOf('\n\n')) >= 0){
+        const frame = sse.slice(0, cut); sse = sse.slice(cut + 2);
+        const line = frame.split('\n').find(l => l.startsWith('data:'));
+        if (!line) continue;
+        let ev; try { ev = JSON.parse(line.slice(5).trim()); } catch(e){ continue; }
+        if (ev.type === 'content_block_delta' && ev.delta && ev.delta.text){
+          text += ev.delta.text;
+          const got = takeCompleteObjects(text, cursor);
+          cursor = got.next;
+          got.objects.forEach(o => { seen++; try { onObject(o, seen); } catch(e){} });
+        }
+      }
+    }
+    if (!seen) throw new Error('stream produced nothing');
+    return seen;
+  }
+
   async function askClaude(prompt, maxTokens){
     const r = await fetch(CLAUDE_API, {
       method:'POST', headers:{'Content-Type':'application/json'},
@@ -1794,6 +1898,7 @@
     toast('Saved');
     // Taste changed, so the menu on screen is answering an out-of-date question.
     pages = []; pageIdx = 0; lastMenuFor = '';
+    clearMenuCache();   // v3.10: taste changed, so EVERY slot's menu is out of date
     loadMenu(true);
     syncAll(true);
   }
@@ -3259,6 +3364,8 @@
       const before = cur.length;
       const filtered = cur.filter(m => m.dish.toLowerCase() !== dish.toLowerCase());
       if (pages[pageIdx]) pages[pageIdx] = filtered;
+      dropFromMenuCache([dish]);   // v3.10: and from every other slot's cached pages
+      dropFromShared([dish]);      // v3.12: and from the household's shared list
       picked_ = new Set();   // indices shifted; clear selection
       if (filtered.length !== before) renderMenu();
     }
@@ -4241,9 +4348,155 @@
   // for free. Only advancing past the last page hits the API. picked_ holds a Set
   // per page index; expanded/details cache per-dish "what is this" lookups.
   let pages = [], pageIdx = 0, picked_ = new Set(), rejected = [];
+
+  // ── Per-slot menu cache (v3.10) ──────────────────────────────────────────
+  // `pages` holds ONE slot's menu. Switching breakfast → lunch overwrote it and
+  // switching back paid for a fresh Claude call — a ~15-25s wait for a menu that
+  // had already been generated and thrown away. The cache keeps each slot's result
+  // (including any extra "show more" pages and which one you were on) so a switch
+  // back is instant and free.
+  //
+  // Keyed by the SAME string loadMenu already builds, so anything that changes the
+  // question — slot, household size, craving — is a different cache entry rather
+  // than a stale hit. Things that change the ANSWER without changing that key
+  // (taste edits, region, ratings) must call clearMenuCache(); they already clear
+  // `lastMenuFor` in the same places.
+  const MENU_TTL = 45 * 60 * 1000;   // a menu built before lunch is not advice at 9pm
+  let menuCache = {};
+
+  function cacheMenu(key){
+    if (!key || !pages.length) return;
+    menuCache[key] = { pages: pages, pageIdx: pageIdx, at: Date.now() };
+  }
+  function readMenuCache(key){
+    const hit = menuCache[key];
+    if (!hit) return null;
+    if (Date.now() - hit.at > MENU_TTL){ delete menuCache[key]; return null; }
+    // Every cached page is re-filtered against what has since been eaten. Without
+    // this, switching back to breakfast would re-offer a dish already logged from
+    // it — the cache must not resurrect stale state, only skip the network.
+    const done = eatenToday().map(m => String(m.dish||'').toLowerCase());
+    hit.pages = hit.pages.map(p => p.filter(m => !done.includes(String(m.dish||'').toLowerCase())));
+    if (!hit.pages.some(p => p.length)){ delete menuCache[key]; return null; }
+    return hit;
+  }
+  function clearMenuCache(){ menuCache = {}; }
+
+  // A dish logged or added from one slot's menu may also be sitting in another
+  // slot's cached pages. Dropping it everywhere keeps the cache honest.
+  function dropFromMenuCache(dishes){
+    const low = dishes.map(d => String(d||'').toLowerCase());
+    Object.keys(menuCache).forEach(k => {
+      menuCache[k].pages = menuCache[k].pages.map(
+        p => p.filter(m => !low.includes(String(m.dish||'').toLowerCase())));
+      if (!menuCache[k].pages.some(p => p.length)) delete menuCache[k];
+    });
+  }
   let loadingMenu = false, lastSlot = null, lastMenuFor = null, craving = '';
 
   function menu(){ return pages[pageIdx] || []; }
+
+  // ── Shared menu (v3.12) ──────────────────────────────────────────────────
+  // `cookNext` is the household's shared list, synced from the Sheet. `menuScope`
+  // decides whose menu is on screen: 'shared' (the default — one answer for food
+  // cooked once in one kitchen) or the active person's name for "just for me".
+  //
+  // The rule chosen for this household is ADD-ONLY: anyone may add dishes, nobody
+  // may replace the list. So generation always APPENDS. There is no client path
+  // that wipes a slot, and deliberately no backend action that could.
+  let cookNext = [], menuScope = 'shared';
+
+  function scopeKey(){ return menuScope === 'shared' ? 'shared' : activePerson; }
+
+  // The shared list, narrowed to the slot and scope on screen. A personal menu
+  // shows the shared dishes TOO — "just for me" means "and also these, chosen for
+  // me", not "hide what the house is eating".
+  function sharedFor(slot, dateStr){
+    const d = dateStr || slotDate(slot);
+    const sk = scopeKey();
+    return cookNext.filter(x =>
+      x.date === d && x.slot === slot &&
+      (x.scope === 'shared' || (sk !== 'shared' && x.scope === sk)));
+  }
+
+  // Which day a slot belongs to. A dinner viewed at 11pm is tomorrow's, and
+  // storing it under today would make it vanish at midnight for everyone else.
+  function slotDate(slot){
+    return slotIsToday(slot) ? today() : tomorrowStr();
+  }
+  function tomorrowStr(){
+    const d = new Date(new Date().toLocaleString('en-US', { timeZone:'Asia/Kolkata' }));
+    d.setDate(d.getDate() + 1);
+    return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+  }
+
+  // Shared rows in, the shape renderMenu already speaks out. Paged 5 at a time so
+  // a list that has grown all evening stays readable.
+  function pagesFromShared(list){
+    const out = [];
+    for (let i = 0; i < list.length; i += 5) out.push(list.slice(i, i + 5).map(x => ({
+      id: x.id, dish: x.dish, for: x.for.length ? x.for : [activePerson],
+      protein: x.protein, portion: x.portion, missing: x.missing, hints: x.hints,
+      details: null, prep: x.prep, prepHours: x.prepHours,
+      scope: x.scope, addedBy: x.addedBy,
+      common: (dishMacros[String(x.dish||'').trim().toLowerCase()]||{}).common
+    })));
+    return out.length ? out : [];
+  }
+
+  // A dish that has been eaten must leave the SHARED list, not just this device's
+  // copy. Otherwise a flatmate opening the app is still offered tonight's dinner an
+  // hour after it was cooked and logged — which is exactly the incoherence the
+  // shared list exists to remove. Removing one dish is not replacing the menu, so
+  // it stays within the add-only rule.
+  function dropFromShared(dishes){
+    const low = dishes.map(d => String(d||'').toLowerCase());
+    const gone = cookNext.filter(x => low.includes(String(x.dish||'').toLowerCase()));
+    if (!gone.length) return;
+    cookNext = cookNext.filter(x => !low.includes(String(x.dish||'').toLowerCase()));
+    // Fire and forget: a failed delete self-corrects on the next generation, and
+    // blocking the log on it would make logging feel slow for no benefit.
+    gone.forEach(x => { if (!String(x.id).startsWith('tmp_'))
+      defer(()=>sheetPost({ action:'removeCookNext', id:x.id })); });
+  }
+
+  // Renders the dishes that have arrived so far, with a skeleton row for the ones
+  // still coming. Without the skeleton a partial menu is indistinguishable from a
+  // finished short one, and people tap the first thing they see — so "more are
+  // loading" has to be visible, not merely true.
+  function renderPartialMenu(list, slot){
+    const box = document.getElementById('t-cook');
+    if (!box || !list.length) return;
+    const expect = 5;
+    const pending = Math.max(0, expect - list.length);
+    box.innerHTML =
+      `<div class="eyebrow" style="color:var(--haldi);">Cook next · ${esc(slot)}</div>` +
+      `<div style="margin-top:8px;">` +
+      list.map(m=>`
+        <div style="padding:9px 0;border-bottom:0.5px solid var(--border);">
+          <div style="font-weight:600;">${esc(m.dish||'')}</div>
+          <div class="tiny" style="color:var(--text3);margin-top:2px;">
+            ${esc(whoLabel(Array.isArray(m.for)?m.for:[activePerson]))}${
+              m.protein ? ' · ' + (+m.protein) + 'g protein' : ''}${
+              m.portion ? ' · ' + esc(m.portion) : ''}
+          </div>
+        </div>`).join('') +
+      (pending ? Array.from({length:pending}).map(()=>`
+        <div style="padding:9px 0;border-bottom:0.5px solid var(--border);opacity:0.45;">
+          <div class="shimmer" style="height:13px;width:52%;background:var(--border);border-radius:3px;"></div>
+          <div class="shimmer" style="height:10px;width:34%;background:var(--border);border-radius:3px;margin-top:7px;"></div>
+        </div>`).join('') : '') +
+      `</div>` +
+      `<div class="tiny" style="color:var(--text3);margin-top:10px;">${
+        pending ? `${list.length} of about ${expect} · still finding more<span class="dots"></span>`
+                : 'Finishing up<span class="dots"></span>'}</div>`;
+  }
+
+  function toggleMenuScope(){
+    menuScope = menuScope === 'shared' ? activePerson : 'shared';
+    pages = []; pageIdx = 0; lastMenuFor = null;
+    loadMenu();
+  }
 
   // ── The repeat rule ──────────────────────────────────────────────────────
   // A dish is off the menu for two days only when the WHOLE house ate it. The
@@ -4313,8 +4566,33 @@
   async function loadMenu(force, newPage){
     if (loadingMenu) return;
     const others = Object.keys(members).length;
-    const key = activeSlot() + '|' + others + '|' + craving;
+    const key = activeSlot() + '|' + others + '|' + craving + '|' + scopeKey();
     if (!force && key === lastMenuFor && pages.length) return;
+    // v3.12. The household's shared list comes FIRST — ahead of the local cache and
+    // far ahead of Claude. If a flatmate already generated tonight's dinner, that is
+    // the household's answer and generating a second one would be both wasteful and
+    // contradictory: the food gets cooked once.
+    if (!force){
+      const shared = sharedFor(activeSlot());
+      if (shared.length){
+        pages = pagesFromShared(shared); pageIdx = 0;
+        lastMenuFor = key; lastSlot = activeSlot(); picked_ = new Set();
+        renderMenu();
+        return;
+      }
+    }
+    // v3.10. A cached slot renders immediately and costs nothing. `force` still
+    // means force — "More ideas" must reach Claude — but an ordinary slot switch
+    // should not.
+    if (!force){
+      const hit = readMenuCache(key);
+      if (hit){
+        pages = hit.pages; pageIdx = Math.min(hit.pageIdx, hit.pages.length - 1);
+        lastMenuFor = key; lastSlot = activeSlot(); picked_ = new Set();
+        renderMenu();
+        return;
+      }
+    }
     loadingMenu = true;
     lastMenuFor = key;
     lastSlot = activeSlot();
@@ -4356,7 +4634,7 @@
       : `Up to TWO options may be dishes she hasn't made before, but they must still be simple everyday Indian home cooking.`;
 
     try {
-      const r = await askJSON(
+      const menuPrompt =
         `Plan a ${slot} menu for an Indian household of ${others} in Delhi. A domestic cook makes the food.\n${roster}\n` +
         `\n${SLOT_SHAPE[slot] || ''}\n` +
         (slotIsToday(slot)
@@ -4388,21 +4666,48 @@
         `For each dish also add "hints": an object mapping each person's name to a SHORT tag of at most 4 words ` +
         `saying how much they'd like it, e.g. "You'll love this", "Might be too spicy", "Not their thing". Only ` +
         `include names who have a notable reaction.\n` +
-        `Return an array of {dish, for, why, protein, portion, missing, hints, prep, prepHours, common} where "for" is an array of exact names ` +
-        `(from: ${Object.keys(members).join(', ')}) who would eat it, "why" is a short phrase, ` +
+        // v3.11. `why` and `common` are dropped from the ask.
+        //  - `common` is a FACT about the dish, already in the shared DishLibrary and
+        //    already hydrated into dishMacros[k].common on every sync. Paying Claude to
+        //    restate what we own was buying our own data back, once per dish, every menu.
+        //  - `why` was only ever a LAST-RESORT label: renderMenu shows hints first, then
+        //    cook-knows, then rating, and reached `why` only when all three were empty.
+        //    Generated for every dish, displayed on almost none.
+        // Output tokens are the latency, so a field nobody reads is pure wait.
+        `Return an array of {dish, for, protein, portion, missing, hints, prep, prepHours} where \"for\" is an array of exact names ` +
+        `(from: ${Object.keys(members).join(', ')}) who would eat it, ` +
         `"protein" is grams per serving as integer, ` +
         `"portion" is ONE person's normal serving in Indian household units with a number in it ` +
         `(e.g. "2 roti + 1 katori", "1 plate", "2 idli + sambar") and must describe the same serving "protein" does, ` +
         `"missing" is ingredients not in the kitchen, ` +
         `"prep" is a short English instruction if the dish needs advance preparation such as soaking, ` +
         `marinating or fermenting (e.g. "Soak the rajma overnight") and an empty string if it needs none, ` +
-        `"prepHours" is how many hours before cooking that preparation must start (0 if none), and ` +
-        `"common" is true only if this is a standard everyday dish nearly every Indian home cook already knows.`, 1500);
+        `\"prepHours\" is how many hours before cooking that preparation must start (0 if none).`;
+
+      // v3.13. Stream and render as each dish's JSON object closes. The buffered
+      // path is kept as the fallback for a browser without a readable body, or a
+      // deploy where claude-stream.mjs isn't up yet — so this is strictly additive.
+      const streamed = [];
+      let r = null;
+      try {
+        await askJSONStream(menuPrompt, 1100, (o)=>{
+          if (!o || !o.dish) return;
+          streamed.push(o);
+          renderPartialMenu(streamed, slot);
+        });
+        r = streamed;
+      } catch(e){
+        r = await askJSON(menuPrompt, 1100);
+      }
       let newMenu = (Array.isArray(r) ? r : []).map(x=>({
         dish:x.dish, for:Array.isArray(x.for)?x.for:[activePerson],
-        why:x.why||'', protein:+x.protein||0, portion:x.portion||'', missing:x.missing||[],
+        protein:+x.protein||0, portion:x.portion||'', missing:x.missing||[],
         hints:x.hints&&typeof x.hints==='object'?x.hints:{}, details:null,
-        prep:x.prep||'', prepHours:+x.prepHours||0, common:x.common !== false
+        prep:x.prep||'', prepHours:+x.prepHours||0,
+        // From the shared library when we know the dish, undefined for one we've
+        // never seen. renderMenu already treats "not false" as say-nothing, so an
+        // unknown dish loses one minor label rather than gaining a wrong one.
+        common: (dishMacros[String(x.dish||'').trim().toLowerCase()]||{}).common
       }));
       if (!newMenu.length) throw new Error('empty menu');
       // The prompt asks; this enforces. Skipped when a craving is on, and never
@@ -4420,12 +4725,38 @@
         if (cur && cur.prepNote) return;
         if (!m.prep && m.common !== false) return;
         const payload = { action:'saveDishLibrary', dish:m.dish.trim(),
-          prepNote:m.prep||'', prepHours:m.prepHours||0, common:m.common,
+          // `common` is deliberately not sent any more: we no longer ask for it, so
+          // writing it back would persist a value the menu never confirmed.
+          // saveDishLibrary keeps the previous value for any field omitted.
+          prepNote:m.prep||'', prepHours:m.prepHours||0,
           updatedBy:activePerson };
         defer(()=>sheetPost(payload));
       });
-      if (newPage){ pages.push(newMenu); pageIdx = pages.length - 1; }
-      else { pages = [newMenu]; pageIdx = 0; }
+      // v3.12. Publish, don't overwrite. `addCookNext` appends and skips dishes
+      // already on the list, so two phones generating at the same moment merge
+      // rather than one erasing the other. The local view is then rebuilt from the
+      // shared list, which means what you see is what everyone sees.
+      const dateStr = slotDate(slot);
+      const pub = await sheetPost({ action:'addCookNext', date:dateStr, slot:slot,
+        scope:scopeKey(), addedBy:activePerson, items:newMenu });
+      if (pub && pub.success){
+        // Optimistic local merge so the menu appears now rather than after the
+        // next 30s poll. The sheet is the source of truth; this just front-runs it.
+        newMenu.forEach(m => cookNext.push({
+          id:'tmp_'+Math.random(), date:dateStr, slot:slot, scope:scopeKey(),
+          dish:m.dish, for:m.for||[], protein:m.protein, portion:m.portion,
+          missing:m.missing||[], hints:m.hints||{}, prep:m.prep, prepHours:m.prepHours,
+          addedBy:activePerson }));
+        pages = pagesFromShared(sharedFor(slot, dateStr));
+        pageIdx = newPage ? pages.length - 1 : 0;
+      } else {
+        // The sheet is unreachable. Show the menu anyway rather than losing a
+        // generation that has already been paid for — it just won't be shared.
+        if (newPage){ pages.push(newMenu); pageIdx = pages.length - 1; }
+        else { pages = [newMenu]; pageIdx = 0; }
+        toast("Couldn't share this menu — only you can see it");
+      }
+      cacheMenu(key);   // v3.10: so switching away and back is free
       // Remember what it actually returned, not what was asked for — the exclusion
       // has to be built from the answer or the same dish comes back next tap.
       if (surprise) newMenu.forEach(m => { if (m.dish) surprisedWith.push(m.dish); });
@@ -4460,7 +4791,10 @@
     if (cookKnows(m.dish) === 'no') notes.push("she doesn't make this");
     const rating = (dishMacros[m.dish.toLowerCase()]||{}).rating;
     if (!notes.length && rating === 'favourite') notes.push('she makes this well');
-    if (!notes.length && m.why) notes.push(m.why);
+    // `why` is no longer generated (v3.11). What replaces it is derived from data we
+    // already hold, which was the point — those labels were more useful than `why`.
+    if (!notes.length && m.missing && m.missing.length)
+      notes.push('need ' + String(m.missing[0]));
     return esc(who) + (notes.length ? ' · ' + esc(notes.slice(0,1)[0]) : '');
   }
 
@@ -4533,6 +4867,21 @@
       </div>
       ${slotOverride ? `<div class="tiny" style="margin-top:6px;">Planning ${slotIsToday(slotOverride)?'today\'s':'the next'} ${esc(slotOverride)} rather than ${esc(mealSlot())}.</div>` : ''}
       ${prepStrip()}
+      ${(function(){
+        // v3.12. Say whose menu this is and who built it. When three people share
+        // one list, "who added this" is the difference between a menu you trust and
+        // one that appeared from nowhere.
+        const others = Object.keys(members).length > 1;
+        if (!others) return '';
+        const mine = menuScope !== 'shared';
+        const by = [...new Set(menu().map(m=>m.addedBy).filter(b=>b && b !== activePerson))];
+        return `<div class="row tiny" style="margin-top:6px;color:var(--text3);">
+          <span>${mine ? 'Just for you'
+            : (by.length ? `Shared · added by ${esc(by.slice(0,2).join(', '))}` : 'Shared with the house')}</span>
+          <button class="btn-ghost" style="padding:2px 0;min-height:0;font-size:12px;"
+            onclick="toggleMenuScope()">${mine ? 'Show the house menu' : 'Just for me'}</button>
+        </div>`;
+      })()}
       <div style="margin-top:6px;">${rows}</div>
 
       <div class="row" style="margin-top:10px;padding-top:10px;border-top:0.5px solid var(--border);">
@@ -4540,7 +4889,7 @@
           onclick="toggleCrave()">${craveOpen?'Hide search':'Something specific'}</button>
         <span style="display:flex;gap:12px;align-items:center;">
           ${pageIdx>0?`<button class="btn-ghost" style="padding:2px 0;min-height:0;font-size:12px;" onclick="prevPage()">‹ Back</button>`:''}
-          <button class="btn-ghost" style="padding:2px 0;min-height:0;font-size:12px;" onclick="otherMenu()">More ideas ›</button>
+          <button class="btn-ghost" style="padding:2px 0;min-height:0;font-size:12px;" onclick="otherMenu()">Add more ›</button>
         </span>
       </div>
       ${(craveOpen || craving) ? `<div style="margin-top:10px;display:flex;gap:8px;">
@@ -4810,6 +5159,8 @@
     closeSheet();
     const done = loggedDishes.map(d=>d.toLowerCase());
     if (pages[pageIdx]) pages[pageIdx] = menu().filter(m => !done.includes(m.dish.toLowerCase()));
+    dropFromMenuCache(done);   // v3.10
+    dropFromShared(done);      // v3.12
     picked_ = new Set();
     renderMenu();
     if (!loggedDishes.length){ toast('Nobody selected — nothing logged'); return; }
@@ -5724,9 +6075,10 @@
     pushHousehold();      // shared facts — the other phones need them too
     closeSheet(); renderYou();
     lastMenuFor = null;   // the dial changes what the menu may suggest, so rebuild it
+    clearMenuCache();     // v3.10: and every cached slot answers the old question
     // The region decides which food the menu may draw from at all, so a change makes
     // every page already generated answer the wrong question.
-    if (regionChanged){ pages = []; pageIdx = 0; surprisedWith = []; loadMenu(true); }
+    if (regionChanged){ pages = []; pageIdx = 0; surprisedWith = []; clearMenuCache(); loadMenu(true); }
     toast('Cook settings saved');
   }
 
