@@ -1,0 +1,42 @@
+Measure,FoodClass,Grams,State,Weigh,Note
+katori,dal cooked,150,cooked,yes,Standard steel katori filled to the rim. The single most-used measure in the house — worth weighing first.
+katori,rice cooked,120,cooked,yes,Loosely packed. Packed down this goes to ~160 and the day's carbs move by 30g.
+katori,sabzi dry,110,cooked,yes,Aloo/bhindi type. Wetter sabzi runs heavier.
+katori,sabzi gravy,160,cooked,,Includes gravy.
+katori,curd,140,raw,yes,
+katori,rajma chhole cooked,170,cooked,yes,Denser than dal.
+katori,poha upma,130,cooked,,
+katori,kheer halwa,150,cooked,,
+katori,salad raw,80,raw,,
+katori,cereal dry,40,raw,,Muesli/oats before milk.
+plate,rice cooked,250,cooked,yes,A full plate serving, roughly two katori.
+plate,sabzi dry,150,cooked,,
+bowl,soup,200,cooked,,Bowl is larger than katori — keep them separate or portions drift.
+bowl,curd,200,raw,,
+roti,wheat,35,cooked,yes,One medium phulka from ~30g atta. Tandoori/paratha are separate rows.
+paratha,wheat plain,60,cooked,yes,Before any ghee.
+paratha,stuffed,110,cooked,,Aloo/gobi/paneer.
+naan,refined,90,cooked,,
+dosa,plain,80,cooked,,
+idli,rice,45,cooked,yes,Per piece.
+chapati,wheat,40,cooked,,Slightly larger than a phulka.
+puri,wheat,25,cooked,,
+slice,bread,25,cooked,,Standard white/brown loaf slice.
+chamach,oil ghee,10,raw,yes,Tablespoon. Oil is the most under-counted thing in Indian cooking — 4 chamach in a sabzi is 360 kcal nobody logs.
+chamach,sugar,12,raw,,
+chamach,ghee,12,raw,,
+chamach,peanut butter,16,raw,,
+teaspoon,oil ghee,5,raw,,
+teaspoon,sugar,4,raw,,
+teaspoon,salt masala,5,raw,,
+glass,milk,200,raw,yes,Standard steel glass.
+glass,water juice,250,raw,,
+glass,lassi chaas,250,raw,,
+cup,tea coffee,150,cooked,yes,With milk and sugar as normally made.
+piece,egg,50,raw,yes,One medium egg without shell. "Boiled Eggs - 4" resolves through this row.
+piece,banana,100,raw,,Medium.
+piece,apple,150,raw,,
+piece,paneer cube,15,raw,,
+piece,chicken,60,raw,,Boneless piece.
+handful,nuts,25,raw,yes,Almonds/cashews. Wildly variable — worth one weighing.
+scoop,whey,30,raw,yes,Read the tub label rather than weighing.

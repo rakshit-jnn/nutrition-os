@@ -1,0 +1,561 @@
+IngID,Name,FullName,Hindi,Aliases,Group,State,Kcal,Protein,Carbs,Fat,Fiber,Common,Source
+A001,amaranth seed,"Amaranth seed, black",ramdana,ramdana,Cereals and Millets,raw,356.1,14.6,60,5.7,7,yes,IFCT2017
+A002,amaranth seed,"Amaranth seed, pale brown",ramdana,,Cereals and Millets,raw,355.9,13.3,61.5,5.6,7.5,variant,IFCT2017
+A003,bajra,Bajra,bajra,bajra,Cereals and Millets,raw,348,11,61.8,5.4,11.5,yes,IFCT2017
+A004,barley,Barley,jau,jau,Cereals and Millets,raw,315.7,10.9,61.3,1.3,15.6,yes,IFCT2017
+A005,jowar,Jowar,jowar,jowar,Cereals and Millets,raw,334.1,10,67.7,1.7,10.2,yes,IFCT2017
+A006,maize,"Maize, dry",makka,makka,Cereals and Millets,raw,334.1,8.8,64.8,3.8,12.2,yes,IFCT2017
+A007,maize,"Maize, tender, local",makka,,Cereals and Millets,raw,120,3.6,22.7,1.4,3.7,variant,IFCT2017
+A008,maize,"Maize, tender, sweet",makka,,Cereals and Millets,raw,96.8,4.2,16.4,1.4,3.3,variant,IFCT2017
+A009,quinoa,Quinoa,,,Cereals and Millets,raw,328.4,13.1,53.7,5.5,14.7,yes,IFCT2017
+A010,ragi,Ragi,ragi,ragi,Cereals and Millets,raw,320.7,7.2,66.8,1.9,11.2,yes,IFCT2017
+A011,rice flakes,Rice flakes,poha,poha,Cereals and Millets,raw,353.7,7.4,76.8,1.1,3.5,yes,IFCT2017
+A012,rice puffed,Rice puffed,muramure,muramure,Cereals and Millets,raw,361.9,7.5,77.7,1.6,2.6,yes,IFCT2017
+A013,rice,"Rice, raw, brown",chawal,chawal; basmati,Cereals and Millets,raw,353.7,9.2,74.8,1.2,4.4,yes,IFCT2017
+A014,rice,"Rice, parboiled, milled",usna chawal,,Cereals and Millets,cooked,351.6,7.8,77.2,0.6,3.7,variant,IFCT2017
+A015,rice,"Rice, raw, milled",chawal,,Cereals and Millets,raw,356.4,7.9,78.2,0.5,2.8,variant,IFCT2017
+A016,samai,Samai,shavan,shavan,Cereals and Millets,raw,346.3,10.1,65.6,3.9,7.7,yes,IFCT2017
+A017,varagu,Varagu,,,Cereals and Millets,raw,331.7,8.9,66.2,2.6,6.4,yes,IFCT2017
+A018,wheat flour,"Wheat flour, refined",maida,,Cereals and Millets,raw,351.8,10.4,74.3,0.8,2.8,variant,IFCT2017
+A019,wheat flour,"Wheat flour, atta",atta,,Cereals and Millets,raw,320.3,10.6,64.2,1.5,11.4,yes,IFCT2017
+A020,wheat,"Wheat, whole",gehun,atta; gehun; whole wheat,Cereals and Millets,raw,321.9,10.6,64.7,1.5,11.2,yes,IFCT2017
+A021,wheat,"Wheat, bulgur",dalia,,Cereals and Millets,raw,341.8,10.8,69.1,1.5,8.8,variant,IFCT2017
+A022,wheat,"Wheat, semolina",gehun suji,,Cereals and Millets,raw,333.7,11.4,68.4,0.7,9.7,variant,IFCT2017
+A023,wheat,"Wheat, vermicelli",siwain,,Cereals and Millets,raw,332.7,9.7,70.4,0.5,9.3,variant,IFCT2017
+A024,wheat,"Wheat, vermicelli, roasted",siwain,,Cereals and Millets,cooked,340.1,10.4,71.4,0.5,9.6,variant,IFCT2017
+B001,bengal gram,"Bengal gram, dal",chan-ki-dal,chana dal; chana; kala chana; chhole; chole; chickpea; chickpeas; kabuli chana; chan ki dal,Grain Legumes,raw,329.1,21.6,46.7,5.3,15.2,yes,IFCT2017
+B002,bengal gram,"Bengal gram, whole","chana, kala chana",,Grain Legumes,raw,287,18.8,39.6,5.1,25.2,variant,IFCT2017
+B003,black gram,"Black gram, dal",urad dal,urad dal; urad; kali dal,Grain Legumes,raw,324.1,23.1,51,1.7,11.9,yes,IFCT2017
+B004,black gram,"Black gram, whole",chhilke wali urad dal,,Grain Legumes,raw,291.3,22,44,1.6,20.4,variant,IFCT2017
+B005,cowpea,"Cowpea, brown",lobia,lobia,Grain Legumes,raw,320.3,20.4,54.6,1.2,11.5,yes,IFCT2017
+B006,cowpea,"Cowpea, white",lobia,,Grain Legumes,raw,320.3,21.3,53.8,1.1,11.7,variant,IFCT2017
+B007,field bean,"Field bean, black",sem,sem,Grain Legumes,raw,276.1,19.9,43.5,0.9,23.4,yes,IFCT2017
+B008,field bean,"Field bean, brown",sem,,Grain Legumes,raw,283,19.9,45.2,1,22.4,variant,IFCT2017
+B009,field bean,"Field bean, white",sem,,Grain Legumes,raw,280.4,19.8,44.5,0.9,23,variant,IFCT2017
+B010,green gram,"Green gram, dal",mug dal,moong dal; moong; mung; mung dal; mug dal,Grain Legumes,raw,325.8,23.9,52.6,1.4,9.4,yes,IFCT2017
+B011,green gram,"Green gram, whole",mung,,Grain Legumes,raw,293.7,22.5,46.1,1.1,17,variant,IFCT2017
+B012,horse gram,"Horse gram, whole",kulthi,kulthi,Grain Legumes,raw,329.6,21.7,57.2,0.6,7.9,yes,IFCT2017
+B013,lentil dal,Lentil dal,masoor dal,masoor dal,Grain Legumes,raw,322.4,24.4,52.5,0.8,10.4,yes,IFCT2017
+B014,lentil whole,"Lentil whole, brown",masur dal,masur dal,Grain Legumes,raw,299,22.5,48.5,0.6,16.8,yes,IFCT2017
+B015,lentil whole,"Lentil whole, yellowish",masur dal,,Grain Legumes,raw,297.8,22.9,47.9,0.6,16.7,variant,IFCT2017
+B016,moth bean,Moth bean,motha,motha,Grain Legumes,raw,308.6,19.8,52.1,1.8,15.1,yes,IFCT2017
+B017,peas,"Peas, dry",sukhi matar,matar; sukhi matar,Grain Legumes,raw,303.3,20.4,48.9,1.9,17,yes,IFCT2017
+B018,rajmah,"Rajmah, black",rajmah,,Grain Legumes,raw,298,19,49.6,1.6,17.7,variant,IFCT2017
+B019,rajmah,"Rajmah, brown",rajmah,,Grain Legumes,raw,297.6,19.5,48.8,1.7,17,variant,IFCT2017
+B020,rajmah,"Rajmah, red",rajmah,rajmah,Grain Legumes,raw,299.2,19.9,48.6,1.8,16.6,yes,IFCT2017
+B021,red gram,"Red gram, dal",,toor dal; tur dal; arhar dal; arhar; pigeon pea,Grain Legumes,raw,330.8,21.7,55.2,1.6,9.1,yes,IFCT2017
+B022,red gram,"Red gram, whole",arhar sabud,,Grain Legumes,raw,273.9,20.5,42.5,1.4,22.8,variant,IFCT2017
+B023,ricebean,Ricebean,meth,meth,Grain Legumes,raw,302.3,20,51.3,0.7,13.4,yes,IFCT2017
+B024,soya bean,"Soya bean, brown",bhatmas,bhatmas,Grain Legumes,raw,381.5,35.6,12.8,19.8,21.6,yes,IFCT2017
+B025,soya bean,"Soya bean, white",bhatmas,,Grain Legumes,raw,377.4,37.8,10.2,19.4,22.6,variant,IFCT2017
+C001,agathi leaves,Agathi leaves,agasthi,agasthi,Green Leafy Vegetables,raw,70.5,8,5.2,1.4,8.6,yes,IFCT2017
+C002,amaranth leaves,"Amaranth leaves, green",chaulai,chaulai,Green Leafy Vegetables,raw,30.6,3.3,2.3,0.7,4.4,yes,IFCT2017
+C003,amaranth leaves,"Amaranth leaves, red mix",chaulai,,Green Leafy Vegetables,raw,33.5,3.9,2.4,0.6,4.9,variant,IFCT2017
+C004,amaranth leaves,"Amaranth leaves, red and green mix",chaulai,,Green Leafy Vegetables,raw,31.5,3.1,2.9,0.5,4.6,variant,IFCT2017
+C005,amaranth spinosus,"Amaranth spinosus, leaves, green mix",kantewali-notya,kantewali notya,Green Leafy Vegetables,raw,26.3,3.5,1.6,0.4,5.1,yes,IFCT2017
+C006,amaranth spinosus,"Amaranth spinosus, leaves, red and green mix",kantewali-notya,,Green Leafy Vegetables,raw,23.7,2.8,1.5,0.3,5.6,variant,IFCT2017
+C007,basella leaves,Basella leaves,palak,,Green Leafy Vegetables,raw,19.6,1.6,2,0.5,2.2,yes,IFCT2017
+C008,bathua leaves,Bathua leaves,bathua sagu,bathua sagu,Green Leafy Vegetables,raw,27.7,2.5,2.6,0.4,4,yes,IFCT2017
+C009,beet greens,Beet greens,chukandhar sag,chukandhar sag,Green Leafy Vegetables,raw,34.7,2.4,3.9,0.8,3.6,yes,IFCT2017
+C010,betel leaves,"Betel leaves, big (kolkata)",pan ka patha,,Green Leafy Vegetables,raw,48.3,2.5,7.4,0.8,2.1,variant,IFCT2017
+C011,betel leaves,"Betel leaves, small",pan ka patha,pan ka patha,Green Leafy Vegetables,raw,43.7,2.6,6.2,0.8,2,yes,IFCT2017
+C012,brussels sprouts,Brussels sprouts,choote gobi,choote gobi,Green Leafy Vegetables,raw,44.2,4.3,5.1,0.5,4.3,yes,IFCT2017
+C013,cabbage,"Cabbage, Chinese",,,Green Leafy Vegetables,raw,17.9,1.6,2.4,0.1,2,variant,IFCT2017
+C014,cabbage,"Cabbage, collard greens",,,Green Leafy Vegetables,raw,30.1,3.6,2.8,0.3,3,variant,IFCT2017
+C015,cabbage,"Cabbage, green",bandh gobi,patta gobi; bandh gobi,Green Leafy Vegetables,raw,21.5,1.4,3.3,0.1,2.8,yes,IFCT2017
+C016,cabbage,"Cabbage, violet",bandh gobi,,Green Leafy Vegetables,raw,23.2,1.4,3.5,0.2,2.2,variant,IFCT2017
+C017,cauliflower leaves,Cauliflower leaves,phul gobi patta,phul gobi patta,Green Leafy Vegetables,raw,35.4,3.9,3.4,0.4,3.4,yes,IFCT2017
+C018,colocasia leaves,"Colocasia leaves, green",arvi ka sag,arvi ka sag,Green Leafy Vegetables,raw,43.5,3.4,3.7,1.4,5.6,yes,IFCT2017
+C019,drumstick leaves,Drumstick leaves,saijan patta,saijan patta,Green Leafy Vegetables,raw,67.4,6.4,5.6,1.6,8.2,yes,IFCT2017
+C020,fenugreek leaves,Fenugreek leaves,methi sag,methi sag,Green Leafy Vegetables,raw,34.4,3.7,2.2,0.8,4.9,yes,IFCT2017
+C021,garden cress,Garden cress,halim ka patta,halim ka patta,Green Leafy Vegetables,raw,49.7,5.6,4.5,0.8,2.6,yes,IFCT2017
+C022,gogu leaves,"Gogu leaves, green",pitwa,,Green Leafy Vegetables,raw,36.3,1.9,4.1,1.1,4.6,variant,IFCT2017
+C023,gogu leaves,"Gogu leaves, red",pitwa,pitwa,Green Leafy Vegetables,raw,36.6,1.9,4.2,1.1,3.9,yes,IFCT2017
+C024,knol-khol,"Knol-Khol, leaves",ganth gobi ka sag,ganth gobi ka sag,Green Leafy Vegetables,raw,42.5,3.1,6.2,0.4,2.8,yes,IFCT2017
+C025,lettuce,Lettuce,salad ka patta,salad ka patta,Green Leafy Vegetables,raw,21.7,1.5,3,0.3,1.8,yes,IFCT2017
+C026,mustard leaves,Mustard leaves,sarson ka sag,sarson ka sag,Green Leafy Vegetables,raw,30.4,3.5,2.4,0.5,3.9,yes,IFCT2017
+C027,pak choi leaves,Pak Choi leaves,,,Green Leafy Vegetables,raw,16,1.4,1.8,0.3,1.9,yes,IFCT2017
+C028,parsley,Parsley,,,Green Leafy Vegetables,raw,72.9,5.6,9.4,1.1,3.9,yes,IFCT2017
+C029,ponnaganni,Ponnaganni,saranthi sag,saranthi sag,Green Leafy Vegetables,raw,50.9,5.3,5.2,0.7,6.7,yes,IFCT2017
+C030,pumpkin leaves,"Pumpkin leaves, tender",kumhra sag,kumhra sag,Green Leafy Vegetables,raw,44.2,4.2,4.8,0.7,2.3,yes,IFCT2017
+C031,radish leaves,Radish leaves,muli ka sag,muli ka sag,Green Leafy Vegetables,raw,26.1,2.2,2.8,0.5,1.8,yes,IFCT2017
+C032,rumex leaves,Rumex leaves,,,Green Leafy Vegetables,raw,19.6,1.6,2.3,0.3,1.3,yes,IFCT2017
+C033,spinach,Spinach,palak,palak,Green Leafy Vegetables,raw,24.4,2.1,2.1,0.6,2.4,yes,IFCT2017
+C034,tamarind leaves,"Tamarind leaves, tender",", p. imli patte",p. imli patte,Green Leafy Vegetables,raw,71.5,5.8,10,0.5,10.7,yes,IFCT2017
+D001,ash gourd,Ash gourd,petha,petha,Other Vegetables,raw,17.4,0.8,2.8,0.1,3.4,yes,IFCT2017
+D002,bamboo shoot,"Bamboo shoot, tender",baans,baans,Other Vegetables,raw,16.3,1.3,1.7,0.4,1.6,yes,IFCT2017
+D003,bean scarlet,"Bean scarlet, tender",sem,,Other Vegetables,raw,42.8,2.9,5.2,1,4.5,yes,IFCT2017
+D004,bitter gourd,"Bitter gourd, jagged, teeth ridges, elongate",karela,,Other Vegetables,raw,20.8,1.4,2.8,0.2,3.8,variant,IFCT2017
+D005,bitter gourd,"Bitter gourd, jagged, teeth ridges, short",karela,karela,Other Vegetables,raw,18.9,1.3,2.5,0.2,3.5,yes,IFCT2017
+D006,bitter gourd,"Bitter gourd, jagged, smooth ridges, elongate",karela,,Other Vegetables,raw,19.4,1.6,2.3,0.3,3.7,variant,IFCT2017
+D007,bottle gourd,"Bottle gourd, elongate, pale green",lowki,,Other Vegetables,raw,11,0.5,1.7,0.1,2.1,variant,IFCT2017
+D008,bottle gourd,"Bottle gourd, round, pale green",lowki,lauki; ghiya; dudhi; lowki,Other Vegetables,raw,13.6,0.4,2.5,0.1,2.1,yes,IFCT2017
+D009,bottle gourd,"Bottle gourd, elongate, dark green",lowki,,Other Vegetables,raw,12.9,0.5,2.3,0.1,2.1,variant,IFCT2017
+D010,brinjal,Brinjal-1,baingan,eggplant; baingan; aubergine,Other Vegetables,raw,27.2,1.8,3.5,0.4,3.6,yes,IFCT2017
+D011,brinjal,Brinjal-2,baingan,,Other Vegetables,raw,23.7,1.8,2.7,0.3,4,variant,IFCT2017
+D012,brinjal,Brinjal-3,baingan,,Other Vegetables,raw,24.4,1.4,3.4,0.3,4.3,variant,IFCT2017
+D013,brinjal,Brinjal-4,baingan,,Other Vegetables,raw,23.9,1.5,3.2,0.3,4,variant,IFCT2017
+D014,brinjal,Brinjal-5,baingan,,Other Vegetables,raw,26.5,1.4,4,0.3,4.1,variant,IFCT2017
+D015,brinjal,Brinjal-6,baingan,,Other Vegetables,raw,23.2,1.5,3.3,0.3,3.7,variant,IFCT2017
+D016,brinjal,Brinjal-7,baingan,,Other Vegetables,raw,23.4,1.4,3.1,0.4,3.3,variant,IFCT2017
+D017,brinjal,Brinjal-8,baingan,,Other Vegetables,raw,28,1.8,3.8,0.3,4,variant,IFCT2017
+D018,brinjal,Brinjal-9,baingan,,Other Vegetables,raw,25.3,1.5,3.5,0.4,4,variant,IFCT2017
+D019,brinjal,Brinjal-10,baingan,,Other Vegetables,raw,27.7,1.7,4.1,0.3,3.9,variant,IFCT2017
+D020,brinjal,Brinjal-11,baingan,,Other Vegetables,raw,25.1,1.4,3.5,0.3,4.1,variant,IFCT2017
+D021,brinjal,Brinjal-12,baingan,,Other Vegetables,raw,22.2,1.6,2.7,0.3,3.9,variant,IFCT2017
+D022,brinjal,Brinjal-13,baingan,,Other Vegetables,raw,29.6,1.5,4.5,0.3,3.9,variant,IFCT2017
+D023,brinjal,Brinjal-14,baingan,,Other Vegetables,raw,25.3,1.6,3.3,0.4,3.9,variant,IFCT2017
+D024,brinjal,Brinjal-15,baingan,,Other Vegetables,raw,27.2,1.6,4,0.3,4,variant,IFCT2017
+D025,brinjal,Brinjal-16,baingan,,Other Vegetables,raw,24.6,1.3,3.5,0.3,3.7,variant,IFCT2017
+D026,brinjal,Brinjal-17,baingan,,Other Vegetables,raw,21.7,1.2,2.9,0.4,3.9,variant,IFCT2017
+D027,brinjal,Brinjal-18,baingan,,Other Vegetables,raw,27.7,1.5,4.1,0.3,4.4,variant,IFCT2017
+D028,brinjal,Brinjal-19,baingan,,Other Vegetables,raw,23.9,1.3,3.4,0.3,4,variant,IFCT2017
+D029,brinjal,Brinjal-20,baingan,,Other Vegetables,raw,23.7,1.4,3.2,0.3,3.7,variant,IFCT2017
+D030,brinjal,Brinjal-21,baingan,,Other Vegetables,raw,27,1.4,3.9,0.4,3.9,variant,IFCT2017
+D031,brinjal - all varieties,Brinjal - all varieties,baingan,,Other Vegetables,raw,25.3,1.5,3.5,0.3,4,yes,IFCT2017
+D032,broad beans,Broad beans,bakla,bakla,Other Vegetables,raw,29.4,3.9,2.1,0.2,8.6,yes,IFCT2017
+D033,capsicum,"Capsicum, green",shimla mirch,,Other Vegetables,raw,16.3,1.1,1.8,0.3,2.1,variant,IFCT2017
+D034,capsicum,"Capsicum, red",shimla mirch,shimla mirch,Other Vegetables,raw,19.8,1.5,2.1,0.5,2.2,yes,IFCT2017
+D035,capsicum,"Capsicum, yellow",shimla mirch,,Other Vegetables,raw,18.6,1.4,2,0.4,2.2,variant,IFCT2017
+D036,cauliflower,Cauliflower,phul gobi,gobi; phool gobi; phul gobi,Other Vegetables,raw,22.9,2.2,2,0.4,3.7,yes,IFCT2017
+D037,celery stalk,Celery stalk,ajmud,ajmud,Other Vegetables,raw,16.5,1,2.3,0.2,2.1,yes,IFCT2017
+D038,cho-cho-marrow,Cho-cho-marrow,cho-cho-marrow,cho cho marrow,Other Vegetables,raw,18.9,0.7,3.5,0.2,1.6,yes,IFCT2017
+D039,cluster beans,Cluster beans,gaur-ki-phalli,gaur ki phalli,Other Vegetables,raw,40.2,3.6,4.9,0.4,4.8,yes,IFCT2017
+D040,colocasia,"Colocasia, stem, black",arwi-ki-dandi,,Other Vegetables,raw,23.9,0.8,3.8,0.3,3,variant,IFCT2017
+D041,colocasia,"Colocasia, stem, green",arwi-ki-dandi,,Other Vegetables,raw,19.4,0.9,2.9,0.2,2.3,variant,IFCT2017
+D042,corn,"Corn, Baby",,,Other Vegetables,raw,73.1,2.7,11.7,1.3,6.1,yes,IFCT2017
+D043,cucumber,"Cucumber, green, elongate","kheera, kachumbar",,Other Vegetables,raw,19.6,0.7,3.5,0.2,2.1,variant,IFCT2017
+D044,cucumber,"Cucumber, green, short","kheera, kachumbar",kheera; kachumbar,Other Vegetables,raw,17.4,0.8,2.8,0.2,2.1,yes,IFCT2017
+D045,cucumber,"Cucumber, orange, round",kakadi,,Other Vegetables,raw,19.6,1,3,0.2,2.5,variant,IFCT2017
+D046,drumstick,Drumstick,saijan-ki-phalli,saijan ki phalli,Other Vegetables,raw,29.4,2.6,3.8,0.1,6.8,yes,IFCT2017
+D047,field beans,"Field beans, tender, broad",sem,,Other Vegetables,raw,30.8,3.1,2.8,0.6,5.6,variant,IFCT2017
+D048,field beans,"Field beans, tender, lean",sem,,Other Vegetables,raw,33.5,3.7,2.9,0.6,6.2,yes,IFCT2017
+D049,french beans,"French beans, country",bakla,,Other Vegetables,raw,24.4,2.5,2.7,0.3,4.4,variant,IFCT2017
+D050,french beans,"French beans, hybrid",bakla,,Other Vegetables,raw,22.2,2.1,2.6,0.2,4.2,yes,IFCT2017
+D051,jack fruit,"Jack fruit, raw",kathal,kathal,Other Vegetables,raw,26.3,2,3.5,0.4,7.7,yes,IFCT2017
+D052,jack fruit,"Jack fruit, seed, mature",kathal,,Other Vegetables,raw,77,5.8,11.8,0.4,8.6,variant,IFCT2017
+D053,knol - khol,Knol - Khol,kohl-rabi,kohl rabi,Other Vegetables,raw,16,1.6,1.4,0.4,2.8,yes,IFCT2017
+D054,kovai,"Kovai, big","konduri, kowai",konduri; kowai,Other Vegetables,raw,17.4,1.4,2,0.2,3,yes,IFCT2017
+D055,kovai,"Kovai, small","konduri, kowai",,Other Vegetables,raw,19.1,1.2,2.4,0.2,3.3,variant,IFCT2017
+D056,ladies finger,Ladies finger,bhindi,okra; bhindi; lady finger,Other Vegetables,raw,27.5,2.1,3.6,0.2,4.1,yes,IFCT2017
+D057,mango,"Mango, green, raw",katcha aam,katcha aam,Other Vegetables,raw,49,0.7,10.6,0.1,3,yes,IFCT2017
+D058,onion,"Onion, stalk",pyaz,,Other Vegetables,raw,25.6,2.1,3,0.3,5.2,variant,IFCT2017
+D059,papaya,"Papaya, raw",katcha pepita,katcha pepita,Other Vegetables,raw,23.9,0.5,4.4,0.2,2.3,yes,IFCT2017
+D060,parwar,Parwar,parwal,parwal,Other Vegetables,raw,24.1,1.4,3.5,0.3,2.6,yes,IFCT2017
+D061,peas,"Peas, fresh",matar,,Other Vegetables,raw,81.3,7.3,11.9,0.1,6.3,variant,IFCT2017
+D062,plantain,"Plantain, flower",kele-ka phool,,Other Vegetables,raw,21.3,1.5,2.2,0.6,5.3,variant,IFCT2017
+D063,plantain,"Plantain, green",kele (hara),,Other Vegetables,raw,79.8,1.2,17.6,0.2,3.6,variant,IFCT2017
+D064,plantain,"Plantain, stem",kele-ka-tana,kele ka tana,Other Vegetables,raw,39.4,0.4,8.6,0.2,2.1,yes,IFCT2017
+D065,pumpkin,"Pumpkin, green, cylindrical",kaddu,,Other Vegetables,raw,24.6,0.9,4.2,0.2,2.5,variant,IFCT2017
+D066,pumpkin,"Pumpkin, orange, round",kaddu,kaddu,Other Vegetables,raw,23.2,0.8,4,0.2,2.6,yes,IFCT2017
+D067,red gram,"Red gram, tender, fresh",arhar ki fali,,Other Vegetables,raw,124.3,8.1,19.5,0.9,5.9,variant,IFCT2017
+D068,ridge gourd,Ridge gourd,torai,turai; tori; torai,Other Vegetables,raw,13.1,0.9,1.7,0.1,1.8,yes,IFCT2017
+D069,ridge gourd,"Ridge gourd, smooth skin",torai,,Other Vegetables,raw,15.3,1,2.2,0.1,1.9,variant,IFCT2017
+D070,snake gourd,"Snake gourd, long, pale green",chachinda,,Other Vegetables,raw,12.4,1,1.3,0.3,2.3,variant,IFCT2017
+D071,snake gourd,"Snake gourd, long, dark green",chachinda,,Other Vegetables,raw,12,0.9,1.2,0.3,2.3,variant,IFCT2017
+D072,snake gourd,"Snake gourd, short",chachinda,chachinda,Other Vegetables,raw,14.6,0.5,2.2,0.3,2.3,yes,IFCT2017
+D073,tinda,"Tinda, tender",tinda,tinda,Other Vegetables,raw,13.9,1,1.9,0.2,2,yes,IFCT2017
+D074,tomato,"Tomato, green",tamator,tamatar; tamator,Other Vegetables,raw,20.8,1.1,3.2,0.3,1.6,yes,IFCT2017
+D075,tomato,"Tomato, ripe, hybrid",tamator,,Other Vegetables,raw,18.9,0.8,3.2,0.3,1.6,variant,IFCT2017
+D076,tomato,"Tomato, ripe, local",tamator,,Other Vegetables,raw,19.6,0.9,2.7,0.5,1.8,variant,IFCT2017
+D077,zucchini,"Zucchini, green",sabed kaddu,sabed kaddu,Other Vegetables,raw,20.1,1.1,2.3,0.5,2.3,yes,IFCT2017
+D078,zucchini,"Zucchini, yellow",sabed kaddu,,Other Vegetables,raw,18.9,1.3,2.2,0.4,1.8,variant,IFCT2017
+E001,apple,"Apple, big",sev,sev,Fruits,raw,62.4,0.3,13.1,0.6,2.6,yes,IFCT2017
+E002,apple,"Apple, green",sev,,Fruits,raw,51.1,0.5,10.7,0.5,2.5,variant,IFCT2017
+E003,apple,"Apple, small",sev,,Fruits,raw,63.8,0.3,14,0.5,2.1,variant,IFCT2017
+E004,apple,"Apple, small, Kashmir",sev,,Fruits,raw,64.3,0.3,14,0.6,2.1,variant,IFCT2017
+E005,apricot,"Apricot, dried",khoomani,khoomani,Fruits,raw,315.7,3.2,72.6,0.7,3.3,yes,IFCT2017
+E006,apricot,"Apricot, processed",khoomani,,Fruits,raw,56.4,1.5,10.9,0.6,0.6,variant,IFCT2017
+E007,avocado fruit,Avocado fruit,makhanphal,makhanphal,Fruits,raw,144.4,3,1.8,13.9,6.7,yes,IFCT2017
+E008,bael fruit,Bael fruit,bel,bel,Fruits,raw,136,2.6,28.2,0.6,6.3,yes,IFCT2017
+E009,banana,"Banana, ripe, montham",kela,,Fruits,raw,110.7,1.3,25,0.3,2.2,variant,IFCT2017
+E010,banana,"Banana, ripe, poovam",kela,,Fruits,raw,106.4,1.5,23.4,0.4,2.3,variant,IFCT2017
+E011,banana,"Banana, ripe, red",kela,kela,Fruits,raw,111.6,1.3,25.2,0.3,2,yes,IFCT2017
+E012,banana,"Banana, ripe, robusta",kela,,Fruits,raw,105.2,1.2,23.6,0.3,1.9,variant,IFCT2017
+E013,black berry,Black berry,kala jamun,kala jamun,Fruits,raw,54.3,0.9,10.6,0.6,4.4,yes,IFCT2017
+E014,cherries,"Cherries, red",gilas,gilas,Fruits,raw,59.8,1.5,11.9,0.5,2.1,yes,IFCT2017
+E015,currants,"Currants, black",munakka,munakka,Fruits,raw,54.3,1.5,9.9,0.5,4.1,yes,IFCT2017
+E016,custard apple,Custard apple,sharifa,sharifa,Fruits,raw,98.9,1.6,20.4,0.7,5.1,yes,IFCT2017
+E017,dates,"Dates, dry, pale brown",chuhara,,Fruits,raw,320.3,2.5,74.9,0.4,9,variant,IFCT2017
+E018,dates,"Dates, dry, dark brown",khajur,,Fruits,raw,310.9,2.4,72.7,0.4,9.1,variant,IFCT2017
+E019,dates,"Dates, processed",khajur,khajur,Fruits,raw,286.1,1.2,68,0.4,6.5,yes,IFCT2017
+E020,fig,Fig,anjeer,anjeer,Fruits,raw,81.5,2,16.3,0.4,4.6,yes,IFCT2017
+E021,goosberry,Goosberry,amla,amla,Fruits,raw,23.7,0.3,4.4,0.2,7.8,yes,IFCT2017
+E022,grapes,"Grapes, seeded, round, black",angoor,,Fruits,raw,60.7,0.8,13.2,0.3,1.4,variant,IFCT2017
+E023,grapes,"Grapes, seeded, round, green",angoor,,Fruits,raw,56.2,0.8,12.2,0.3,1.3,variant,IFCT2017
+E024,grapes,"Grapes, seeded, round, red",angoor,angoor,Fruits,raw,58.3,1,12.6,0.3,1.3,yes,IFCT2017
+E025,grapes,"Grapes, seedless, oval, black",angoor,,Fruits,raw,94.4,1.4,20.5,0.5,1.6,variant,IFCT2017
+E026,grapes,"Grapes, seedless, round, green",angoor,,Fruits,raw,53.5,0.6,11.8,0.3,1.3,variant,IFCT2017
+E027,grapes,"Grapes, seedless, round, black",angoor,,Fruits,raw,89.4,1.2,19.9,0.4,1.2,variant,IFCT2017
+E028,guava,"Guava, white flesh",amrud,,Fruits,raw,32.3,1.4,5.1,0.3,8.6,variant,IFCT2017
+E029,guava,"Guava, pink flesh",amrud,amrud,Fruits,raw,46.6,1.2,9.1,0.3,7.4,yes,IFCT2017
+E030,jack fruit,"Jack fruit, ripe",kathal,,Fruits,raw,72.2,2.7,14,0.2,3.6,variant,IFCT2017
+E031,jambu fruit,"Jambu fruit, ripe",jamun,jamun,Fruits,raw,56.2,0.8,12.3,0.2,3.1,yes,IFCT2017
+E032,karonda fruit,Karonda fruit,"balalak, dindimi",balalak; dindimi,Fruits,raw,33.7,1.2,2.9,1.7,7.3,yes,IFCT2017
+E033,lemon,"Lemon, juice",nimbhu,nimbhu,Fruits,raw,36.6,0.4,0,0.8,0,yes,IFCT2017
+E034,lime,"Lime, sweet, pulp",mosambi,mosambi,Fruits,raw,27.2,0.8,5.2,0.2,2.1,yes,IFCT2017
+E035,litchi,Litchi,lichi,lichi,Fruits,raw,53.8,1,11.4,0.3,1.3,yes,IFCT2017
+E036,mango,"Mango, ripe, banganapalli",aam (paka),,Fruits,raw,41.8,0.5,8.2,0.6,1.9,variant,IFCT2017
+E037,mango,"Mango, ripe, gulabkhas",aam (paka),,Fruits,raw,50,0.5,10.3,0.5,1.7,variant,IFCT2017
+E038,mango,"Mango, ripe, himsagar",aam (paka),,Fruits,raw,44.7,0.5,9,0.5,1.6,variant,IFCT2017
+E039,mango,"Mango, ripe, kesar",aam (paka),,Fruits,raw,55.2,0.5,11.4,0.6,2,variant,IFCT2017
+E040,mango,"Mango, ripe, neelam",aam (paka),,Fruits,raw,42.5,0.7,8.2,0.6,1.8,variant,IFCT2017
+E041,mango,"Mango, ripe, paheri",aam (paka),,Fruits,raw,44.9,0.7,8.7,0.6,2,variant,IFCT2017
+E042,mango,"Mango, ripe, totapari",aam (paka),,Fruits,raw,59.3,0.4,12.8,0.5,1.7,variant,IFCT2017
+E043,mangosteen,Mangosteen,mangustan,mangustan,Fruits,raw,52.3,0.6,11.4,0.2,1.9,yes,IFCT2017
+E044,manila tamarind,Manila tamarind,ganga imli/ jangal jalebi,ganga imli/ jangal jalebi,Fruits,raw,81.7,3.6,13.5,1.1,4.4,yes,IFCT2017
+E045,musk melon,"Musk melon, orange flesh",kharbooja,kharbooja,Fruits,raw,23.2,0.4,4.2,0.4,1.5,yes,IFCT2017
+E046,musk melon,"Musk melon, yellow flesh",kharbooja,,Fruits,raw,27.7,0.5,5.4,0.3,1.5,variant,IFCT2017
+E047,orange,"Orange, pulp",santra,santra,Fruits,raw,37.3,0.7,7.9,0.1,1.3,yes,IFCT2017
+E048,palm fruit,"Palm fruit, tender",tar,tar,Fruits,raw,24.1,0.5,4.9,0.1,2.4,yes,IFCT2017
+E049,papaya,"Papaya, ripe",papita,,Fruits,raw,23.9,0.4,4.6,0.2,2.8,variant,IFCT2017
+E050,peach,Peach,aroo,aroo,Fruits,raw,40.2,0.9,7.8,0.4,2.1,yes,IFCT2017
+E051,pear,Pear,nashpati,nashpati,Fruits,raw,37.5,0.4,8.1,0.3,4.5,yes,IFCT2017
+E052,phalsa,Phalsa,falsa,falsa,Fruits,raw,71.5,1.7,15.1,0.1,4.5,yes,IFCT2017
+E053,pineapple,Pineapple,ananas,ananas,Fruits,raw,43,0.5,9.4,0.2,3.5,yes,IFCT2017
+E054,plum,Plum,alubokhara,alubokhara,Fruits,raw,56.9,0.6,12.1,0.4,2.1,yes,IFCT2017
+E055,pomegranate,"Pomegranate, maroon seeds",anar,anar,Fruits,raw,54.7,1.3,11.6,0.2,2.8,yes,IFCT2017
+E056,pummelo,Pummelo,chakotra,chakotra,Fruits,raw,50.2,0.7,10.6,0.4,0.8,yes,IFCT2017
+E057,raisins,"Raisins, dried, black",kishmish,kishmish,Fruits,raw,305.7,2.6,71.3,0.3,3.9,yes,IFCT2017
+E058,raisins,"Raisins, dried, golden",kishmish,,Fruits,raw,296.6,2.8,68.8,0.4,4.6,variant,IFCT2017
+E059,rambutan,Rambutan,rambutan.,rambutan.,Fruits,raw,73.1,0.7,16.8,0.2,1,yes,IFCT2017
+E060,sapota,Sapota,chiku,chiku,Fruits,raw,73.4,0.9,13.9,1.3,9.6,yes,IFCT2017
+E061,soursop,Soursop,shul-ram fal,shul ram fal,Fruits,raw,62.1,0.7,11.9,0.9,5,yes,IFCT2017
+E062,star fruit,Star fruit,kazmal/kamrakh,kazmal/kamrakh,Fruits,raw,26.3,0.8,4.5,0.4,2.8,yes,IFCT2017
+E063,strawberry,Strawberry,,,Fruits,raw,24.6,1,3.4,0.6,2.5,yes,IFCT2017
+E064,tamarind,"Tamarind, pulp",imli,imli,Fruits,raw,288.5,2.9,67.4,0.2,5.3,yes,IFCT2017
+E065,water melon,"Water melon, dark green (sugar baby)",tarbuj,,Fruits,raw,20.3,0.6,3.9,0.2,0.7,variant,IFCT2017
+E066,water melon,"Water melon, pale green",tarbuj,tarbuj,Fruits,raw,16.7,0.6,3,0.2,0.8,yes,IFCT2017
+E067,wood apple,Wood Apple,kaith,kaith,Fruits,raw,78.2,3.1,7.5,3.6,5.2,yes,IFCT2017
+E068,zizyphus,Zizyphus,ber,ber,Fruits,raw,48.8,1.3,9.4,0.4,3.7,yes,IFCT2017
+F001,beet root,Beet root,chukandar,chukandar,Roots and Tubers,raw,35.6,2,6.2,0.1,3.3,yes,IFCT2017
+F002,carrot,"Carrot, orange",gajar,,Roots and Tubers,raw,33.2,1,5.6,0.5,4.2,variant,IFCT2017
+F003,carrot,"Carrot, red",gajar,gajar,Roots and Tubers,raw,38.2,1,6.7,0.5,4.5,yes,IFCT2017
+F004,colocasia,Colocasia,arwi,arbi; taro; arwi,Roots and Tubers,raw,88.9,3.3,17.9,0.2,3.2,yes,IFCT2017
+F005,lotus root,Lotus root,"kamal gatta, kamal kakdi",kamal gatta; kamal kakdi,Roots and Tubers,raw,79.3,1.9,14.7,0.9,4.7,yes,IFCT2017
+F006,potato,"Potato, brown skin, big",alu,,Roots and Tubers,raw,69.8,1.5,14.9,0.2,1.7,variant,IFCT2017
+F007,potato,"Potato, brown skin, small",alu,,Roots and Tubers,raw,60.9,1.4,12.9,0.2,1.7,variant,IFCT2017
+F008,potato,"Potato, red skin",alu,aloo; alu,Roots and Tubers,raw,73.1,1.8,15.4,0.2,1.7,yes,IFCT2017
+F009,radish,"Radish, elongate, red skin",muli,,Roots and Tubers,raw,32,0.7,6.7,0.1,2.5,variant,IFCT2017
+F010,radish,"Radish, elongate, white skin",muli,,Roots and Tubers,raw,32.3,0.8,6.6,0.2,2.7,variant,IFCT2017
+F011,radish,"Radish, round, red skin",muli,muli,Roots and Tubers,raw,31.1,0.9,6.1,0.2,2.3,yes,IFCT2017
+F012,radish,"Radish, round, white skin",muli,,Roots and Tubers,raw,30.8,0.8,6.1,0.1,2.4,variant,IFCT2017
+F013,sweet potato,"Sweet potato, brown skin",shakarkand,,Roots and Tubers,raw,109,1.3,24.3,0.3,4,variant,IFCT2017
+F014,sweet potato,"Sweet potato, pink skin",shakarkand,shakarkand,Roots and Tubers,raw,108,1.3,23.9,0.3,3.9,yes,IFCT2017
+F015,tapioca,Tapioca,simla alu,simla alu,Roots and Tubers,raw,79.8,1,17.8,0.2,4.6,yes,IFCT2017
+F016,water chestnut,Water Chestnut,", mar. shingara",mar. shingara,Roots and Tubers,raw,95.6,0.9,21.5,0.4,3,yes,IFCT2017
+F017,yam,"Yam, elephant",zimikandha,,Roots and Tubers,raw,84.4,2.6,17.5,0.1,4.2,variant,IFCT2017
+F018,yam,"Yam, ordinary",sooran,,Roots and Tubers,raw,83.4,2.2,17.7,0.2,4.1,variant,IFCT2017
+F019,yam,"Yam, wild",suaralu,suaralu,Roots and Tubers,raw,102.8,3.1,21,0.3,4.6,yes,IFCT2017
+G001,chillies,"Chillies, green-1",hara mirchi,,Condiments and Spices,raw,45.7,2.6,6.3,0.7,4.9,variant,IFCT2017
+G002,chillies,"Chillies, green-2",hara mirchi,,Condiments and Spices,raw,39.9,2.3,5.3,0.8,5.1,variant,IFCT2017
+G003,chillies,"Chillies, green-3",hara mirchi,,Condiments and Spices,raw,40.4,2.4,5.2,0.8,5.1,variant,IFCT2017
+G004,chillies,"Chillies, green-4",hara mirchi,,Condiments and Spices,raw,45.4,2.3,6.6,0.7,4.2,variant,IFCT2017
+G005,chillies,"Chillies, green-5",hara mirchi,,Condiments and Spices,raw,43,2,6.6,0.7,4,variant,IFCT2017
+G006,chillies,"Chillies, green-6",hara mirchi,,Condiments and Spices,raw,41.8,3,5.3,0.6,5.2,variant,IFCT2017
+G007,chillies,"Chillies, green-7",hara mirchi,,Condiments and Spices,raw,39,2.1,5.6,0.6,5,variant,IFCT2017
+G008,chillies,"Chillies, green - all varieties",hara mirchi,,Condiments and Spices,raw,42.3,2.4,5.9,0.7,4.8,variant,IFCT2017
+G009,coriander leaves,Coriander leaves,hara dhania,hara dhania,Condiments and Spices,raw,31.1,3.5,1.9,0.7,4.7,yes,IFCT2017
+G010,curry leaves,Curry leaves,gandhela,gandhela,Condiments and Spices,raw,63.6,7.4,4.5,1.1,16.8,yes,IFCT2017
+G011,garlic,"Garlic, big clove",lehsan,lehsun; lehsan,Condiments and Spices,raw,123.8,6.9,21.9,0.2,5.2,yes,IFCT2017
+G012,garlic,"Garlic, small clove",lehsan,,Condiments and Spices,raw,122.8,6.8,21.8,0.1,5.5,variant,IFCT2017
+G013,garlic,"Garlic, single clove, Kashmir",lehsan,,Condiments and Spices,raw,125,6.1,23.5,0.2,4,variant,IFCT2017
+G014,ginger,"Ginger, fresh",adrak,adrak,Condiments and Spices,raw,55,2.2,9,0.9,5.4,yes,IFCT2017
+G015,mango ginger,Mango ginger,aam adhrak,aam adhrak,Condiments and Spices,raw,42.3,1.5,7,0.7,4.7,yes,IFCT2017
+G016,mint leaves,Mint leaves,pudina,pudina,Condiments and Spices,raw,37,4.7,2.4,0.7,5.9,yes,IFCT2017
+G017,onion,"Onion, big",pyaz,pyaz; pyaaz,Condiments and Spices,raw,48,1.5,9.6,0.2,2.5,yes,IFCT2017
+G018,onion,"Onion, small",pyaaz kali,,Condiments and Spices,raw,56.6,1.8,11.6,0.2,1.2,variant,IFCT2017
+G019,asafoetida,Asafoetida,hing,hing,Condiments and Spices,raw,331.5,6.3,72,1.3,5.1,yes,IFCT2017
+G020,cardamom,"Cardamom, green",elaychi,elaychi,Condiments and Spices,raw,255,8.1,47.8,2.6,23.1,yes,IFCT2017
+G021,cardamom,"Cardamom, black",badi elaychi,,Condiments and Spices,raw,270.6,6.7,52.5,2.8,23.5,variant,IFCT2017
+G022,chillies,"Chillies, red",mirchi,mirchi,Condiments and Spices,raw,236.6,12.7,29.5,6.4,31.2,yes,IFCT2017
+G023,cloves,Cloves,lavang,lavang,Condiments and Spices,raw,186.7,5.9,18.7,8.4,34.5,yes,IFCT2017
+G024,coriander seeds,Coriander seeds,dhania,dhania,Condiments and Spices,raw,268.9,10.7,13,17.5,44.8,yes,IFCT2017
+G025,cumin seeds,Cumin seeds,jira,jira,Condiments and Spices,raw,304.5,13.9,22.6,16.6,30.4,yes,IFCT2017
+G026,fenugreek seeds,Fenugreek seeds,methi,methi,Condiments and Spices,raw,234.9,25.4,10.6,5.7,47.6,yes,IFCT2017
+G027,mace,Mace,avithri,avithri,Condiments and Spices,raw,355.6,6.2,26.5,24.4,20.3,yes,IFCT2017
+G028,nutmeg,Nutmeg,jaiphal,jaiphal,Condiments and Spices,raw,463.7,6.3,27.6,36.5,12,yes,IFCT2017
+G029,omum,Omum,ajwan,ajwan,Condiments and Spices,raw,357.3,15.9,24.5,21.1,20.6,yes,IFCT2017
+G030,pippali,Pippali,pipli,pipli,Condiments and Spices,raw,216.5,10.5,35.7,2.3,34.1,yes,IFCT2017
+G031,pepper,"Pepper, black",kalimirchi,kalimirchi,Condiments and Spices,raw,217.5,10.1,36.2,2.7,33.2,yes,IFCT2017
+G032,poppy seeds,Poppy seeds,postdana,postdana,Condiments and Spices,raw,422.6,20.3,12.4,30.4,26.7,yes,IFCT2017
+G033,turmeric powder,Turmeric powder,haldi,haldi,Condiments and Spices,raw,280.6,7.7,49.2,5,21.4,yes,IFCT2017
+H001,almond,Almond,badam,badam,Nuts and Oil Seeds,raw,609.2,18.4,3,58.5,13.1,yes,IFCT2017
+H002,arecanut,"Arecanut, dried, brown",supari,,Nuts and Oil Seeds,raw,350.6,5.8,70.4,4.4,11.4,variant,IFCT2017
+H003,arecanut,"Arecanut, dried, red color",supari,,Nuts and Oil Seeds,raw,353,6.5,70.3,4.5,11.1,variant,IFCT2017
+H004,arecanut,"Arecanut, fresh",supari,supari,Nuts and Oil Seeds,raw,244.7,2.7,45,5.5,7.6,yes,IFCT2017
+H005,cashew nut,Cashew nut,kaju,kaju,Nuts and Oil Seeds,raw,582.7,18.8,25.5,45.2,3.9,yes,IFCT2017
+H006,coconut,"Coconut, kernal, dry",nariyal,nariyal,Nuts and Oil Seeds,raw,624,7.3,8,63.3,15.9,yes,IFCT2017
+H007,coconut,"Coconut, kernel, fresh",nariyal,,Nuts and Oil Seeds,raw,408.9,3.8,6.3,41.4,10.4,variant,IFCT2017
+H008,garden cress,"Garden cress, seeds",halim,,Nuts and Oil Seeds,raw,445.3,23.4,33.7,23.7,8.3,variant,IFCT2017
+H009,gingelly seeds,"Gingelly seeds, black",til,til,Nuts and Oil Seeds,raw,507.6,19.2,10.3,43.1,17.2,yes,IFCT2017
+H010,gingelly seeds,"Gingelly seeds, brown",til,,Nuts and Oil Seeds,raw,516.5,21.6,9.8,43.2,17.2,variant,IFCT2017
+H011,gingelly seeds,"Gingelly seeds, white",til,,Nuts and Oil Seeds,raw,519.6,21.7,10.8,43.1,17,variant,IFCT2017
+H012,ground nut,Ground nut,moog phali,moog phali,Nuts and Oil Seeds,raw,520.1,23.7,17.3,39.6,10.4,yes,IFCT2017
+H013,mustard seeds,Mustard seeds,rai,rai,Nuts and Oil Seeds,raw,509.6,19.5,16.8,40.2,14.1,yes,IFCT2017
+H014,linseeds,Linseeds,alsi,alsi,Nuts and Oil Seeds,raw,443.8,18.6,11,35.7,26.2,yes,IFCT2017
+H015,niger seeds,"Niger seeds, black",kala til,,Nuts and Oil Seeds,raw,512.4,18.9,23,38.6,10.9,variant,IFCT2017
+H016,niger seeds,"Niger seeds, gray",kala til,kala til,Nuts and Oil Seeds,raw,508.6,18.3,20.6,39.5,11,yes,IFCT2017
+H017,pine seed,Pine seed,chilgoza,chilgoza,Nuts and Oil Seeds,raw,594.2,12.6,26.8,48.8,3.8,yes,IFCT2017
+H018,pistachio nuts,Pistachio nuts,pista,pista,Nuts and Oil Seeds,raw,539.4,23.4,15.8,42.5,10.6,yes,IFCT2017
+H019,safflower seeds,Safflower seeds,kardi,kardi,Nuts and Oil Seeds,raw,473.5,17.7,30.2,30.9,13.5,yes,IFCT2017
+H020,sunflower seeds,Sunflower seeds,surya mukhi,surya mukhi,Nuts and Oil Seeds,raw,586.3,23.5,6.9,51.9,10.8,yes,IFCT2017
+H021,walnut,Walnut,akhrot,akhrot,Nuts and Oil Seeds,raw,671.4,14.9,10.1,64.3,5.4,yes,IFCT2017
+I001,jaggery,"Jaggery, cane",gud,gud,Sugars,raw,353.7,1.9,84.9,0.2,0,yes,IFCT2017
+I002,sugarcane,"Sugarcane, juice",ganne-ka-ras,ganne ka ras,Sugars,raw,57.8,0.2,13.1,0.4,0.6,yes,IFCT2017
+J001,button mushroom,"Button mushroom, fresh",,,Mushrooms,raw,27.5,3.7,2,0.4,3.1,yes,IFCT2017
+J002,chicken mushroom,"Chicken mushroom, fresh",,,Mushrooms,raw,21.3,1.8,2.8,0.3,2,yes,IFCT2017
+J003,shiitake mushroom,"Shiitake mushroom, fresh",,,Mushrooms,raw,58.1,3.2,9,0.8,3,yes,IFCT2017
+J004,oyster mushroom,"Oyster mushroom, dried",,,Mushrooms,raw,243.5,19,33.1,2.9,39.1,yes,IFCT2017
+K001,toddy,Toddy,tarai,,Miscellaneous Foods,raw,24.1,0.2,5.7,0,0,no,IFCT2017
+K002,coconut water,Coconut Water,nariyal ka pani,,Miscellaneous Foods,raw,15.3,0.3,3.2,0.2,0,no,IFCT2017
+L001,milk,"Milk, whole, Buffalo",bhains ka dhood,,Milk and Milk Products,raw,107.3,3.7,8.4,6.6,0,variant,IFCT2017
+L002,milk,"Milk, whole, Cow",gai ka doodh,gai ka doodh,Milk and Milk Products,raw,72.9,3.3,4.9,4.5,0,yes,IFCT2017
+L003,paneer,Paneer,chhena,chhena,Milk and Milk Products,raw,257.9,18.9,12.4,14.8,0,yes,IFCT2017
+L004,khoa,Khoa,,,Milk and Milk Products,raw,316,16.3,16.5,20.6,0,yes,IFCT2017
+M001,egg,"Egg, poultry, whole, raw",,,Egg and Egg Products,raw,134.8,13.3,0,9.2,0,variant,IFCT2017
+M002,egg,"Egg, poultry, white, raw",,,Egg and Egg Products,raw,44.7,10.8,0,0.1,0,variant,IFCT2017
+M003,egg,"Egg, poultry, yolk, raw",,,Egg and Egg Products,raw,296.8,15.7,0,26.3,0,variant,IFCT2017
+M004,egg,"Egg, poultry, whole, boiled",,,Egg and Egg Products,cooked,147.7,13.4,0,10.5,0,variant,IFCT2017
+M005,egg,"Egg, poultry, white, boiled",,,Egg and Egg Products,cooked,52.6,12.4,0,0.3,0,variant,IFCT2017
+M006,egg,"Egg, poultry, yolk, boiled",,,Egg and Egg Products,cooked,308.3,16.1,0,27.5,0,variant,IFCT2017
+M007,egg,"Egg, poultry, omlet",,,Egg and Egg Products,raw,169.7,16.5,0,11.6,0,yes,IFCT2017
+M008,egg,"Egg, country hen, whole, raw",,,Egg and Egg Products,raw,168.3,13.1,0,13,0,variant,IFCT2017
+M009,egg,"Egg, country hen, whole, boiled",,,Egg and Egg Products,cooked,183.3,14.4,0,14.1,0,variant,IFCT2017
+M010,egg,"Egg, country hen, omlet",,,Egg and Egg Products,raw,204.3,14.8,0,16.3,0,variant,IFCT2017
+M011,egg,"Egg, duck, whole, boiled",,,Egg and Egg Products,cooked,176.4,13.8,0,13.6,0,variant,IFCT2017
+M012,egg,"Egg, duck, whole, raw",,,Egg and Egg Products,raw,181.6,14.6,0,13.8,0,variant,IFCT2017
+M013,egg,"Egg, duck, whole, omlet",,,Egg and Egg Products,raw,192.2,15.1,0,14.8,0,variant,IFCT2017
+M014,egg,"Egg, quial, whole, raw",,,Egg and Egg Products,raw,151.8,12.4,0,11.5,0,variant,IFCT2017
+M015,egg,"Egg, quial, whole, boiled",,,Egg and Egg Products,cooked,154.6,13,0,11.5,0,variant,IFCT2017
+N001,chicken,"Chicken, poultry, leg, skinless",,,Poultry,raw,383.6,19.4,0,12.6,0,yes,IFCT2017
+N002,chicken,"Chicken, poultry, thigh, skinless",,,Poultry,raw,199.8,18.2,0,14.2,0,variant,IFCT2017
+N003,chicken,"Chicken, poultry, breast, skinless",,,Poultry,raw,168.3,21.8,0,9,0,variant,IFCT2017
+N004,chicken,"Chicken, poultry, wing, skinless",,,Poultry,raw,192.9,17.4,0,13.8,0,variant,IFCT2017
+N005,poultry,"Poultry, chicken, liver",,,Poultry,raw,123.8,21.6,0,4.1,0,yes,IFCT2017
+N006,poultry,"Poultry, chicken, gizzard",,,Poultry,raw,92.3,18.2,0,2.1,0,variant,IFCT2017
+N007,country hen,"Country hen, leg, with skin",,,Poultry,raw,172.8,17,0,11.7,0,yes,IFCT2017
+N008,country hen,"Country hen, thigh, with skin",,,Poultry,raw,187.6,18.3,0,12.8,0,variant,IFCT2017
+N009,country hen,"Country hen, breast, with skin",,,Poultry,raw,180,22.1,0,10.2,0,variant,IFCT2017
+N010,country hen,"Country hen, wing, with skin",,,Poultry,raw,182.6,18.7,0,12.1,0,variant,IFCT2017
+N011,duck,"Duck, meat, with skin",,,Poultry,raw,130.7,19.1,0,6,0,yes,IFCT2017
+N012,emu,"Emu, meat, skinless",,,Poultry,raw,132.9,22.7,0,4.6,0,yes,IFCT2017
+N013,guinea fowl,"Guinea fowl, meat, with skin",,,Poultry,raw,112.1,20.5,0,3.2,0,yes,IFCT2017
+N014,pigeon,"Pigeon, meat, with skin",,,Poultry,raw,126.2,17.9,0,6,0,yes,IFCT2017
+N015,quail,"Quail, meat, skinless",,,Poultry,raw,137.7,20.9,0,6,0,yes,IFCT2017
+N016,turkey,"Turkey, leg, with skin",,,Poultry,raw,154.6,20.3,0,8.2,0,yes,IFCT2017
+N017,turkey,"Turkey, thigh, with skin",,,Poultry,raw,138.9,20.5,0,6.3,0,variant,IFCT2017
+N018,turkey,"Turkey, breast, with skin",,,Poultry,raw,160.4,22,0,8,0,variant,IFCT2017
+N019,turkey,"Turkey, wing, with skin",,,Poultry,raw,184.3,21.9,0,10.8,0,variant,IFCT2017
+O001,goat,"Goat, shoulder, meat",,,Animal Meat,raw,188.1,20.3,0,11.9,0,no,IFCT2017
+O002,goat,"Goat, chops",,,Animal Meat,raw,135.8,20.4,0,6,0,no,IFCT2017
+O003,goat,"Goat, legs",,,Animal Meat,raw,159.9,22.1,0,7.9,0,no,IFCT2017
+O004,goat,"Goat, brain",,,Animal Meat,raw,127.4,13.8,0,8.1,0,no,IFCT2017
+O005,goat,"Goat, tongue",,,Animal Meat,raw,188.6,16.6,0,13.7,0,no,IFCT2017
+O006,goat,"Goat, lungs",,,Animal Meat,raw,95.8,16.9,0,3.1,0,no,IFCT2017
+O007,goat,"Goat, heart",,,Animal Meat,raw,117.6,19.4,0,4.4,0,no,IFCT2017
+O008,goat,"Goat, liver",,,Animal Meat,raw,125.7,20.3,0,4.9,0,no,IFCT2017
+O009,goat,"Goat, tripe",,,Animal Meat,raw,92.3,15.4,0,3.4,0,no,IFCT2017
+O010,goat,"Goat, spleen",,,Animal Meat,raw,95.8,18.5,0,2.4,0,no,IFCT2017
+O011,goat,"Goat, kidneys",,,Animal Meat,raw,89.4,15.6,0,2.9,0,no,IFCT2017
+O012,goat,"Goat, tube (small intestine)",,,Animal Meat,raw,125.5,12.9,0,8.3,0,no,IFCT2017
+O013,goat,"Goat, testis",,,Animal Meat,raw,71.2,12.3,0,2.4,0,no,IFCT2017
+O014,sheep,"Sheep, shoulder",,,Animal Meat,raw,200.8,18.2,0,14.3,0,no,IFCT2017
+O015,sheep,"Sheep, chops",,,Animal Meat,raw,118.5,18,0,5.2,0,no,IFCT2017
+O016,sheep,"Sheep, leg",,,Animal Meat,raw,164,21.4,0,8.7,0,no,IFCT2017
+O017,sheep,"Sheep, brain",,,Animal Meat,raw,117.6,13.1,0,7.3,0,no,IFCT2017
+O018,sheep,"Sheep, tongue",,,Animal Meat,raw,187.1,16.6,0,13.5,0,no,IFCT2017
+O019,sheep,"Sheep, lungs",,,Animal Meat,raw,86.8,16.1,0,2.4,0,no,IFCT2017
+O020,sheep,"Sheep, heart",,,Animal Meat,raw,106.4,18.2,0,3.7,0,no,IFCT2017
+O021,sheep,"Sheep, liver",,,Animal Meat,raw,133.6,22.3,0,4.9,0,no,IFCT2017
+O022,sheep,"Sheep, tripe",,,Animal Meat,raw,104,16.8,0,4.1,0,no,IFCT2017
+O023,sheep,"Sheep, spleen",,,Animal Meat,raw,91.8,16,0,3,0,no,IFCT2017
+O024,sheep,"Sheep, kidneys",,,Animal Meat,raw,91.8,16.2,0,2.9,0,no,IFCT2017
+O025,beef,"Beef, shoulder",,,Animal Meat,raw,212.5,20.6,0,14.6,0,no,IFCT2017
+O026,beef,"Beef, chops",,,Animal Meat,raw,139.8,19.8,0,6.7,0,no,IFCT2017
+O027,beef,"Beef, round (leg)",,,Animal Meat,raw,157.3,22.6,0,7.4,0,no,IFCT2017
+O028,beef,"Beef, brain",,,Animal Meat,raw,125,10.6,0,9.3,0,no,IFCT2017
+O029,beef,"Beef, tongue",,,Animal Meat,raw,174.7,15.6,0,12.6,0,no,IFCT2017
+O030,beef,"Beef, lungs",,,Animal Meat,raw,83.9,15.7,0,2.3,0,no,IFCT2017
+O031,beef,"Beef, heart",,,Animal Meat,raw,103.5,17.7,0,3.6,0,no,IFCT2017
+O032,beef,"Beef, liver",,,Animal Meat,raw,119.3,20.7,0,4,0,no,IFCT2017
+O033,beef,"Beef, tripe",,,Animal Meat,raw,75.5,13.1,0,2.5,0,no,IFCT2017
+O034,beef,"Beef, spleen",,,Animal Meat,raw,90.3,17.4,0,2.2,0,no,IFCT2017
+O035,beef,"Beef, kidneys",,,Animal Meat,raw,104.9,17.1,0,4,0,no,IFCT2017
+O036,calf,"Calf, shoulder",,,Animal Meat,raw,151.3,21,0,7.5,0,no,IFCT2017
+O037,calf,"Calf, chops",,,Animal Meat,raw,125.2,22.5,0,3.9,0,no,IFCT2017
+O038,calf,"Calf, round (leg)",,,Animal Meat,raw,147,21.1,0,6.9,0,no,IFCT2017
+O039,calf,"Calf, brain",,,Animal Meat,raw,107.1,9.8,0,7.6,0,no,IFCT2017
+O040,calf,"Calf, tongue",,,Animal Meat,raw,176.1,17.8,0,11.8,0,no,IFCT2017
+O041,calf,"Calf, heart",,,Animal Meat,raw,109.7,18.8,0,3.8,0,no,IFCT2017
+O042,calf,"Calf, liver",,,Animal Meat,raw,120.2,21,0,4,0,no,IFCT2017
+O043,calf,"Calf, spleen",,,Animal Meat,raw,90.6,17.7,0,2.1,0,no,IFCT2017
+O044,calf,"Calf, kidneys",,,Animal Meat,raw,92.5,15.2,0,3.5,0,no,IFCT2017
+O045,mithun,"Mithun, shoulder",,,Animal Meat,raw,175.9,19.1,0,11.1,0,no,IFCT2017
+O046,mithun,"Mithun, chops",,,Animal Meat,raw,128.1,18.2,0,6.1,0,no,IFCT2017
+O047,mithun,"Mithun, round (leg)",,,Animal Meat,raw,115.9,19.6,0,4.1,0,no,IFCT2017
+O048,pork,"Pork, shoulder",,,Animal Meat,raw,237.3,17.4,0,18.8,0,no,IFCT2017
+O049,pork,"Pork, chops",,,Animal Meat,raw,178.8,19.4,0,11.3,0,no,IFCT2017
+O050,pork,"Pork, ham",,,Animal Meat,raw,240.4,18.8,0,18.6,0,no,IFCT2017
+O051,pork,"Pork, lungs",,,Animal Meat,raw,85.6,15.1,0,2.7,0,no,IFCT2017
+O052,pork,"Pork, heart",,,Animal Meat,raw,109.2,16.3,0,4.9,0,no,IFCT2017
+O053,pork,"Pork, liver",,,Animal Meat,raw,115.7,19.9,0,3.9,0,no,IFCT2017
+O054,pork,"Pork, stomach",,,Animal Meat,raw,131.5,15.4,0,7.8,0,no,IFCT2017
+O055,pork,"Pork, spleen",,,Animal Meat,raw,85.3,15.1,0,2.7,0,no,IFCT2017
+O056,pork,"Pork, kidneys",,,Animal Meat,raw,90.6,14.4,0,3.7,0,no,IFCT2017
+O057,pork,"Pork, tube (small intestine)",,,Animal Meat,raw,140.3,15,0,9,0,no,IFCT2017
+O058,hare,"Hare, shoulder",,,Animal Meat,raw,144.1,21.1,0,6.6,0,no,IFCT2017
+O059,hare,"Hare, chops",,,Animal Meat,raw,106.4,20.6,0,2.6,0,no,IFCT2017
+O060,hare,"Hare, leg",,,Animal Meat,raw,120.2,20.5,0,4.2,0,no,IFCT2017
+O061,rabbit,"Rabbit, shoulder",,,Animal Meat,raw,151.8,20,0,8,0,no,IFCT2017
+O062,rabbit,"Rabbit, chops",,,Animal Meat,raw,135,22.6,0,4.9,0,no,IFCT2017
+O063,rabbit,"Rabbit, leg",,,Animal Meat,raw,139.6,21.3,0,6,0,no,IFCT2017
+P001,allathi,Allathi,,,Marine Fish,raw,97,21.8,0,1,0,no,IFCT2017
+P002,aluva,Aluva,,,Marine Fish,raw,103.7,21.6,0,1.8,0,no,IFCT2017
+P003,anchovy,Anchovy,,,Marine Fish,raw,87.7,19.9,0,0.8,0,no,IFCT2017
+P004,ari fish,Ari fish,,,Marine Fish,raw,99.2,22,0,1.1,0,no,IFCT2017
+P005,betki,Betki,,,Marine Fish,raw,67.9,15.3,0,0.3,0,no,IFCT2017
+P006,black snapper,Black snapper,,,Marine Fish,raw,90.1,19.5,0,1.2,0,no,IFCT2017
+P007,bombay duck,Bombay duck,,,Marine Fish,raw,68.6,13.5,0,1,0,no,IFCT2017
+P008,bommuralu,Bommuralu,,,Marine Fish,raw,115.9,22.3,0,2.9,0,no,IFCT2017
+P009,cat fish,Cat fish,,,Marine Fish,raw,109,22.2,0,2.1,0,no,IFCT2017
+P010,chakla,Chakla,,,Marine Fish,raw,97,20.2,0,1.7,0,no,IFCT2017
+P011,chappal,Chappal,,,Marine Fish,raw,75.8,17.2,0,0.7,0,no,IFCT2017
+P012,chelu,Chelu,,,Marine Fish,raw,87.5,20,0,0.7,0,no,IFCT2017
+P013,chembali,Chembali,,,Marine Fish,raw,97,20.1,0,1.8,0,no,IFCT2017
+P014,eri meen,Eri meen,,,Marine Fish,raw,108.5,22.3,0,2,0,no,IFCT2017
+P015,gobro,Gobro,,,Marine Fish,raw,86.5,19.4,0,0.9,0,no,IFCT2017
+P016,guitar fish,Guitar fish,,,Marine Fish,raw,95.6,22.6,0,0.4,0,no,IFCT2017
+P017,hilsa,Hilsa,hilsa,,Marine Fish,raw,258.8,21.8,0,18.5,0,no,IFCT2017
+P018,jallal,Jallal,,,Marine Fish,raw,100.4,21.6,0,1.5,0,no,IFCT2017
+P019,jathi vela meen,Jathi vela meen,,,Marine Fish,raw,108.3,22.5,0,1.9,0,no,IFCT2017
+P020,kadal bral,Kadal bral,,,Marine Fish,raw,88,18.7,0,1.3,0,no,IFCT2017
+P021,kadali,Kadali,,,Marine Fish,raw,126.7,22.1,0,4.2,0,no,IFCT2017
+P022,kalamaara,Kalamaara,,,Marine Fish,raw,125,20.9,0,4.5,0,no,IFCT2017
+P023,kalava,Kalava,,,Marine Fish,raw,89.4,19.4,0,1.2,0,no,IFCT2017
+P024,kanamayya,Kanamayya,,,Marine Fish,raw,87.7,20.2,0,0.7,0,no,IFCT2017
+P025,kannadi paarai,Kannadi paarai,,,Marine Fish,raw,101.1,22.1,0,1.3,0,no,IFCT2017
+P026,karimeen,Karimeen,,,Marine Fish,raw,92.3,19.7,0,1.4,0,no,IFCT2017
+P027,karnagawala,Karnagawala,,,Marine Fish,raw,86.8,19.5,0,0.8,0,no,IFCT2017
+P028,kayrai,Kayrai,,,Marine Fish,raw,108.5,20.2,0,3,0,no,IFCT2017
+P029,kiriyan,Kiriyan,,,Marine Fish,raw,132.9,22.5,0,4.7,0,no,IFCT2017
+P030,kite fish,Kite fish,,,Marine Fish,raw,98.7,23.1,0,0.6,0,no,IFCT2017
+P031,korka,Korka,,,Marine Fish,raw,126.2,23.7,0,3.4,0,no,IFCT2017
+P032,kulam paarai,Kulam paarai,,,Marine Fish,raw,119.7,21.6,0,3.6,0,no,IFCT2017
+P033,maagaa,Maagaa,,,Marine Fish,raw,87.5,20.1,0,0.7,0,no,IFCT2017
+P034,mackerel,Mackerel,,,Marine Fish,raw,101.1,21.5,0,1.5,0,no,IFCT2017
+P035,manda clathi,Manda clathi,,,Marine Fish,raw,95.1,21.3,0,1,0,no,IFCT2017
+P036,matha,Matha,,,Marine Fish,raw,93,21.2,0,0.8,0,no,IFCT2017
+P037,milk fish,Milk fish,,,Marine Fish,raw,105.6,23.7,0,1.1,0,no,IFCT2017
+P038,moon fish,Moon fish,,,Marine Fish,raw,125.7,20.7,0,4.7,0,no,IFCT2017
+P039,mullet,Mullet,,,Marine Fish,raw,93.9,20.2,0,1.3,0,no,IFCT2017
+P040,mural,Mural,,,Marine Fish,raw,82.5,19,0,0.6,0,no,IFCT2017
+P041,myil meen,Myil meen,,,Marine Fish,raw,98,22.9,0,0.6,0,no,IFCT2017
+P042,nalla bontha,Nalla bontha,,,Marine Fish,raw,87,19.8,0,0.7,0,no,IFCT2017
+P043,narba,Narba,,,Marine Fish,raw,103.3,22,0,1.6,0,no,IFCT2017
+P044,paarai,Paarai,,,Marine Fish,raw,104,21.6,0,1.8,0,no,IFCT2017
+P045,padayappa,Padayappa,,,Marine Fish,raw,86,19.7,0,0.7,0,no,IFCT2017
+P046,pali kora,Pali kora,,,Marine Fish,raw,94.2,19.3,0,1.8,0,no,IFCT2017
+P047,pambada,Pambada,,,Marine Fish,raw,128.3,22,0,4.4,0,no,IFCT2017
+P048,pandukopa,Pandukopa,,,Marine Fish,raw,86,19.7,0,0.7,0,no,IFCT2017
+P049,parava,Parava,,,Marine Fish,raw,111.6,21.5,0,2.7,0,no,IFCT2017
+P050,parcus,Parcus,,,Marine Fish,raw,86.3,19.9,0,0.6,0,no,IFCT2017
+P051,parrot fish,Parrot fish,,,Marine Fish,raw,89.6,20.8,0,0.6,0,no,IFCT2017
+P052,perinkilichai,Perinkilichai,,,Marine Fish,raw,92.5,20.9,0,0.9,0,no,IFCT2017
+P053,phopat,Phopat,,,Marine Fish,raw,101.3,22.1,0,1.3,0,no,IFCT2017
+P054,piranha,Piranha,,,Marine Fish,raw,131.2,20.5,0,5.4,0,no,IFCT2017
+P055,pomfret,"Pomfret, black",,,Marine Fish,raw,123.1,18.9,0,4.8,0,no,IFCT2017
+P056,pomfret,"Pomfret, snub nose",,,Marine Fish,raw,89.6,21.1,0,0.5,0,no,IFCT2017
+P057,pomfret,"Pomfret, white",,,Marine Fish,raw,122.6,19,0,5.1,0,no,IFCT2017
+P058,pranel,Pranel,,,Marine Fish,raw,96.8,19.7,0,1.9,0,no,IFCT2017
+P059,pulli paarai,Pulli paarai,,,Marine Fish,raw,95.4,20.1,0,1.6,0,no,IFCT2017
+P060,queen fish,Queen fish,,,Marine Fish,raw,95.6,21,0,1.2,0,no,IFCT2017
+P061,raai fish,Raai fish,,,Marine Fish,raw,102.8,21.6,0,1.7,0,no,IFCT2017
+P062,raai vanthu,Raai vanthu,,,Marine Fish,raw,98,19.4,0,2.2,0,no,IFCT2017
+P063,rani,Rani,,,Marine Fish,raw,90.1,18.8,0,1.5,0,no,IFCT2017
+P064,ray fish,"Ray fish, bow head, spotted",,,Marine Fish,raw,83.4,19,0,0.7,0,no,IFCT2017
+P065,red snapper,Red snapper,,,Marine Fish,raw,104.4,22.8,0,1.3,0,no,IFCT2017
+P066,red snapper,"Red snapper, small",,,Marine Fish,raw,107.8,21.5,0,2.3,0,no,IFCT2017
+P067,sadaya,Sadaya,,,Marine Fish,raw,110.4,20.7,0,3,0,no,IFCT2017
+P068,salmon,Salmon,,,Marine Fish,raw,172.3,21,0,9.9,0,no,IFCT2017
+P069,sangada,Sangada,,,Marine Fish,raw,105.9,20.3,0,2.7,0,no,IFCT2017
+P070,sankata paarai,Sankata paarai,,,Marine Fish,raw,103.7,21.9,0,1.7,0,no,IFCT2017
+P071,sardine,Sardine,,,Marine Fish,raw,152.2,17.9,0,9,0,no,IFCT2017
+P072,shark,Shark,,,Marine Fish,raw,95.1,21.6,0,0.8,0,no,IFCT2017
+P073,shark,"Shark, hammer head",,,Marine Fish,raw,103.3,23.4,0,0.8,0,no,IFCT2017
+P074,shark,"Shark, spotted",,,Marine Fish,raw,91.8,21,0,0.8,0,no,IFCT2017
+P075,shelavu,Shelavu,,,Marine Fish,raw,106.6,22.5,0,1.7,0,no,IFCT2017
+P076,silan,Silan,,,Marine Fish,raw,151.3,22.7,0,6.7,0,no,IFCT2017
+P077,silk fish,Silk fish,,,Marine Fish,raw,97.5,20.7,0,1.5,0,no,IFCT2017
+P078,silver carp,Silver carp,,,Marine Fish,raw,132.6,21.7,0,5.2,0,no,IFCT2017
+P079,sole fish,Sole fish,,,Marine Fish,raw,87.7,19.1,0,1.2,0,no,IFCT2017
+P080,stingray,Stingray,,,Marine Fish,raw,97.5,24,0,0.7,0,no,IFCT2017
+P081,tarlava,Tarlava,,,Marine Fish,raw,98.9,21.7,0,1.2,0,no,IFCT2017
+P082,tholam,Tholam,,,Marine Fish,raw,103.3,20.8,0,2.1,0,no,IFCT2017
+P083,tilapia,Tilapia,,,Marine Fish,raw,83.4,18.5,0,1.1,0,no,IFCT2017
+P084,tuna,Tuna,,,Marine Fish,raw,112.3,24.5,0,1.4,0,no,IFCT2017
+P085,tuna,"Tuna, striped",,,Marine Fish,raw,96.3,21.3,0,1.1,0,no,IFCT2017
+P086,valava,Valava,,,Marine Fish,raw,98,21.8,0,1.1,0,no,IFCT2017
+P087,vanjaram,Vanjaram,,,Marine Fish,raw,136.2,22.3,0,5.2,0,no,IFCT2017
+P088,vela meen,Vela meen,,,Marine Fish,raw,128.3,22.2,0,4.3,0,no,IFCT2017
+P089,vora,Vora,,,Marine Fish,raw,100.9,20.1,0,2.1,0,no,IFCT2017
+P090,whale shark,Whale shark,,,Marine Fish,raw,95.8,21.8,0,0.8,0,no,IFCT2017
+P091,xiphinis,Xiphinis,,,Marine Fish,raw,88.4,19.8,0,0.9,0,no,IFCT2017
+P092,eggs,"Eggs, Cat fish",,,Marine Fish,raw,143.4,24.7,0,5.3,0,no,IFCT2017
+Q001,crab,Crab,,,Marine Shellfish,raw,82,10.2,0,1.4,0,no,IFCT2017
+Q002,crab,"Crab, sea",,,Marine Shellfish,raw,67.6,15.4,0,0.6,0,no,IFCT2017
+Q003,lobster,"Lobster, brown",,,Marine Shellfish,raw,69.8,16,0,0.6,0,no,IFCT2017
+Q004,lobster,"Lobster, king size",,,Marine Shellfish,raw,89.6,18.5,0,0.8,0,no,IFCT2017
+Q005,mud crab,Mud crab,,,Marine Shellfish,raw,45.4,10,0,0.6,0,no,IFCT2017
+Q006,oyster,Oyster,,,Marine Shellfish,raw,60.2,9.5,0,2.4,0,no,IFCT2017
+Q007,tiger prawns,"Tiger prawns, brown",,,Marine Shellfish,raw,65.2,14.9,0,0.6,0,no,IFCT2017
+Q008,tiger prawns,"Tiger Prawns, orange",,,Marine Shellfish,raw,64.5,14.3,0,0.7,0,no,IFCT2017
+R001,clam,"Clam, green shell",,,Marine Mollusks,raw,58.1,12.1,0,1,0,no,IFCT2017
+R002,clam,"Clam, white shell, ribbed",,,Marine Mollusks,raw,59.8,11.8,0,1.3,0,no,IFCT2017
+R003,octopus,Octopus,,,Marine Mollusks,raw,79.8,14.7,0,1.1,0,no,IFCT2017
+R004,squid,"Squid, black",,,Marine Mollusks,raw,80.1,16.1,0,1.1,0,no,IFCT2017
+R005,squid,"Squid, hard shell",,,Marine Mollusks,raw,76.5,16.8,0,0.9,0,no,IFCT2017
+R006,squid,"Squid, red",,,Marine Mollusks,raw,78.6,16.3,0,1.4,0,no,IFCT2017
+R007,squid,"Squid, white, small",,,Marine Mollusks,raw,84.4,17.4,0,1.2,0,no,IFCT2017
+S001,cat fish,Cat fish,,,Fresh Water Fish and Shellfish,raw,123.8,15.9,0,6.2,0,no,IFCT2017
+S002,catla,Catla,"catla, bhakur, boassa, katla, chepti",,Fresh Water Fish and Shellfish,raw,94.2,17.9,0,2.2,0,no,IFCT2017
+S003,freshwater eel,Freshwater Eel,,,Fresh Water Fish and Shellfish,raw,107.8,20.4,0,2.6,0,no,IFCT2017
+S004,gold fish,Gold fish,,,Fresh Water Fish and Shellfish,raw,94.6,16.9,0,2.9,0,no,IFCT2017
+S005,pangas,Pangas,,,Fresh Water Fish and Shellfish,raw,203.6,17.1,0,16.8,0,no,IFCT2017
+S006,rohu,Rohu,"bhobhari, rohu",,Fresh Water Fish and Shellfish,raw,102.3,19.7,0,2.4,0,no,IFCT2017
+S007,crab,Crab,,,Fresh Water Fish and Shellfish,raw,78.2,13.2,0,0.9,0,no,IFCT2017
+S008,prawns,"Prawns, big",,,Fresh Water Fish and Shellfish,raw,90.8,19.2,0,0.5,0,no,IFCT2017
+S009,prawns,"Prawns, small",,,Fresh Water Fish and Shellfish,raw,71,13.1,0,0.8,0,no,IFCT2017
+S010,tiger prawns,Tiger prawns,,,Fresh Water Fish and Shellfish,raw,67.9,14.2,0,0.7,0,no,IFCT2017
+T001,coconut oil,Coconut oil,,,Edible Oils and Fats,raw,0,0,0,100,0,yes,IFCT2017
+T002,corn oil,Corn oil,,,Edible Oils and Fats,raw,0,0,0,100,0,yes,IFCT2017
+T003,cotton seed oil,Cotton seed oil,,,Edible Oils and Fats,raw,0,0,0,100,0,yes,IFCT2017
+T004,gingelly oil,Gingelly oil,,,Edible Oils and Fats,raw,0,0,0,100,0,yes,IFCT2017
+T005,groundnut oil,Groundnut oil,,,Edible Oils and Fats,raw,0,0,0,100,0,yes,IFCT2017
+T006,mustard oil,Mustard oil,,,Edible Oils and Fats,raw,0,0,0,100,0,yes,IFCT2017
+T007,palm oil,Palm oil,,,Edible Oils and Fats,raw,0,0,0,100,0,yes,IFCT2017
+T008,rice bran oil,Rice bran oil,,,Edible Oils and Fats,raw,0,0,0,100,0,yes,IFCT2017
+T009,safflower oil,Safflower oil,,,Edible Oils and Fats,raw,0,0,0,100,0,yes,IFCT2017
+T010,safflower oil (blended),Safflower oil (blended),,,Edible Oils and Fats,raw,0,0,0,100,0,yes,IFCT2017
+T011,soyabean oil,Soyabean oil,,,Edible Oils and Fats,raw,0,0,0,100,0,yes,IFCT2017
+T012,sunflower oil,Sunflower oil,,,Edible Oils and Fats,raw,0,0,0,100,0,yes,IFCT2017
+T013,ghee,Ghee,,,Edible Oils and Fats,raw,0,0,0,100,0,yes,IFCT2017
+T014,vanaspati,Vanaspati,,,Edible Oils and Fats,raw,0,0,0,100,0,yes,IFCT2017
+X001,curd,"Curd, whole milk buffalo",dahi,dahi; yoghurt; yogurt; plain curd,Milk and Milk Products,raw,98,3.7,4.5,7.2,0,yes,SUPPLEMENT-VERIFY
+X002,curd toned,"Curd, toned milk",dahi,toned dahi; low fat curd,Milk and Milk Products,raw,60,3.4,4.7,3,0,yes,SUPPLEMENT-VERIFY
+X003,greek yogurt,"Yogurt, Greek, plain",,hung curd; greek curd,Milk and Milk Products,raw,59,10,3.6,0.4,0,yes,SUPPLEMENT-VERIFY
+X004,butter,"Butter, table",makkhan,makkhan; white butter,Edible Oils and Fats,raw,717,0.9,0.1,81,0,yes,SUPPLEMENT-VERIFY
+X005,cheese,"Cheese, processed",,cheese slice; processed cheese,Milk and Milk Products,raw,350,20,2.5,28,0,yes,SUPPLEMENT-VERIFY
+X006,mozzarella,"Cheese, mozzarella",,pizza cheese,Milk and Milk Products,raw,300,22,2.2,22,0,yes,SUPPLEMENT-VERIFY
+X007,bread white,"Bread, white loaf",,white bread; pav,Cereals and Millets,cooked,265,9,49,3.2,2.7,yes,SUPPLEMENT-VERIFY
+X008,bread brown,"Bread, whole wheat",,brown bread; atta bread; multigrain bread,Cereals and Millets,cooked,247,13,41,3.4,7,yes,SUPPLEMENT-VERIFY
+X009,besan,Bengal gram flour,besan,gram flour; chickpea flour,Cereals and Millets,raw,387,22,58,6.7,11,yes,SUPPLEMENT-VERIFY
+X010,tofu,"Tofu, firm",,soy paneer; bean curd,Grain Legumes,raw,144,17,2.8,8.7,2.3,yes,SUPPLEMENT-VERIFY
+X011,soya chunks,"Soya nuggets, defatted",nutri,nutrela; soy chunks; meal maker,Grain Legumes,raw,345,52,33,0.5,13,yes,SUPPLEMENT-VERIFY
+X012,whey protein,Whey protein concentrate powder,,protein powder; whey,Miscellaneous Foods,raw,400,78,8,6,0,yes,SUPPLEMENT-VERIFY
+X013,peanut butter,"Peanut butter, unsweetened",,pb,Nuts and Oil Seeds,raw,588,25,20,50,6,yes,SUPPLEMENT-VERIFY
+X014,honey,Honey,shahad,shahad,Sugars,raw,304,0.3,82,0,0,yes,SUPPLEMENT-VERIFY
+X015,coconut milk,"Coconut milk, canned",nariyal doodh,nariyal doodh,Nuts and Oil Seeds,raw,197,2,3,21,0,yes,SUPPLEMENT-VERIFY
+X016,cream,"Cream, dairy, 25% fat",malai,malai; fresh cream,Milk and Milk Products,raw,245,2.5,3.5,25,0,yes,SUPPLEMENT-VERIFY
+X017,buttermilk,"Buttermilk, salted",chaas,chaas; chhach; lassi salted,Milk and Milk Products,raw,40,3.3,4.8,0.9,0,yes,SUPPLEMENT-VERIFY
+X018,skimmed milk powder,"Milk powder, skimmed",,milk powder; smp,Milk and Milk Products,raw,362,36,52,0.8,0,yes,SUPPLEMENT-VERIFY
