@@ -441,6 +441,14 @@
 
     <div class="pad" style="margin-top:12px;">
       <div class="card">
+        <div class="eyebrow">Macro data</div>
+        <p class="muted" style="margin:10px 0;">Ingredient tables, stock cleanup, and recipes — the numbers behind every macro in the app.</p>
+        <button style="width:100%;" onclick="openMacroSetup()">Open setup</button>
+      </div>
+    </div>
+
+    <div class="pad" style="margin-top:12px;">
+      <div class="card">
         <div class="eyebrow">Make this better</div>
         <p class="muted" style="margin:10px 0;">Something annoying, broken, or missing? Tell me and it gets read.</p>
         <textarea id="y-fb" placeholder="The meal log takes too many taps when…"></textarea>
@@ -492,7 +500,7 @@
   const VISION_API = '/api/vision';
   const MODEL      = 'claude-sonnet-4-5';
   const SHEET_URL  = 'https://script.google.com/macros/s/AKfycbxXDdY5y_QUVIML1Zb4nwTnuryI_Uqhe-EGwc_iDT_s5OZ9wJNcfWvILo4rCC5bN6XT/exec';
-  const VERSION    = 'v3.5';
+  const VERSION    = 'v3.9';
   const POLL_MS    = 30000;
 
   // ══════════ STATE ══════════
@@ -689,6 +697,12 @@
 
   // ══════════ SYNC ══════════
   let syncing = false, lastSync = null;
+  let batchWarned = false;   // v3.6: warn once, not every 30s, if getAll is missing
+  // v3.7 macro foundation. `ingredients` is fetched once and cached — 560 rows of
+  // static lab data has no business on a 30-second poll — while measures/recipes
+  // ride the sync batch because they are small and do change.
+  let ingredients = [], ingIndex = {}, measures = [], recipes = [];
+  let photoCanonNote = 0;   // how many names a photo scan rewrote, for the toast
   // Which settings are genuinely shared. Everything else in `settings` is device- or
   // session-scoped (prompt dismissals, low-stock thresholds) and must NOT be synced —
   // syncing "I dismissed the prep card today" would dismiss it on everyone's phone.
@@ -737,12 +751,43 @@
     syncing = true;
     if (!silent) setSyncLabel('syncing…');
     try {
-      const [inv, ml, mac, prefs, wk, lib, skl, wl, mn, pl, hh] = await Promise.all([
-        sheetGet('getInventory'), sheetGet('getMealLog'), sheetGet('getMacros'),
-        sheetGet('getPreferences'), sheetGet('getWorkoutLog'),
-        sheetGet('getDishLibrary'), sheetGet('getCookSkills'), sheetGet('getWishlist'),
-        sheetGet('getMenu'), sheetGet('getMealPlans'), sheetGet('getHousehold')
-      ]);
+      // ── One request, not eleven (v3.6) ────────────────────────────────────
+      // Apps Script serialises concurrent requests from the same user, so the old
+      // Promise.all of 11 GETs queued behind each other and each paid the request
+      // tax again. `getAll` returns the same 11 payloads from one execution.
+      // The fallback is not optional: if the HTML ships before Code.gs is
+      // redeployed, `getAll` answers "unknown action" and every tab would read as
+      // empty — which looks exactly like data loss. Detect that and use the old
+      // path, so shipping in the wrong order degrades to slow, never to blank.
+      let all = await sheetGet('getAll');
+      if (!all || !all.batch){
+        if (!batchWarned){
+          batchWarned = true;
+          console.warn('getAll unavailable — falling back to 11 GETs. Redeploy Code.gs.');
+        }
+        const [inv0, ml0, mac0, prefs0, wk0, lib0, skl0, wl0, mn0, pl0, hh0] = await Promise.all([
+          sheetGet('getInventory'), sheetGet('getMealLog'), sheetGet('getMacros'),
+          sheetGet('getPreferences'), sheetGet('getWorkoutLog'),
+          sheetGet('getDishLibrary'), sheetGet('getCookSkills'), sheetGet('getWishlist'),
+          sheetGet('getMenu'), sheetGet('getMealPlans'), sheetGet('getHousehold')
+        ]);
+        const [ms0, rc0] = await Promise.all([sheetGet('getMeasures'), sheetGet('getRecipes')]);
+        all = { getInventory:inv0, getMealLog:ml0, getMacros:mac0, getPreferences:prefs0,
+                getWorkoutLog:wk0, getDishLibrary:lib0, getCookSkills:skl0, getWishlist:wl0,
+                getMenu:mn0, getMealPlans:pl0, getHousehold:hh0,
+                getMeasures:ms0, getRecipes:rc0 };
+      }
+      const inv = all.getInventory, ml = all.getMealLog, mac = all.getMacros,
+            prefs = all.getPreferences, wk = all.getWorkoutLog, lib = all.getDishLibrary,
+            skl = all.getCookSkills, wl = all.getWishlist, mn = all.getMenu,
+            pl = all.getMealPlans, hh = all.getHousehold,
+            ms = all.getMeasures, rc = all.getRecipes;
+      // v3.7. Library data, so it is safe to hold in memory and re-render from.
+      // A backend that predates these tabs returns undefined, which must leave the
+      // previous value alone rather than blanking it — same rule as every other
+      // reader here: a failed fetch is not evidence that the data is gone.
+      if (ms && ms.measures) measures = ms.measures;
+      if (rc && rc.recipes)  recipes  = rc.recipes;
       applyHousehold(hh);
 
       // Same guard as the wishlist: an Apps Script still on the previous version
@@ -3340,7 +3385,11 @@
     await logMeal(dish, type, who);
     // Rate first (instant), then run stock deduction as a follow-up so the two
     // bottom sheets never overwrite each other.
-    if (atHome) promptRating([dish], () => suggestDeduction(dish));
+    // `who.length` IS the serving count — a dal eaten by four consumes four
+    // servings' worth of dal. Defaulting this to 1 would under-deduct every
+    // family meal by the size of the family, which is the quiet drift that makes
+    // an inventory stop matching the kitchen.
+    if (atHome) promptRating([dish], () => suggestDeduction(dish, Math.max(1, who.length)));
   }
 
   function pickOne(btn){
@@ -3354,6 +3403,450 @@
     return on ? on.dataset.v : null;
   }
   function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+  // ══════════ INGREDIENT RESOLUTION (client, v3.9) ══════════
+  // A deliberate port of resolveIngredient() from Code.gs. The duplication is the
+  // lesser evil: canonicalising on entry means resolving every line as it is typed
+  // or scanned, and a network round trip per line would make the kitchen box feel
+  // broken. test-macros.js asserts the two implementations agree on the same cases,
+  // so a change to one that isn't mirrored fails the build rather than drifting.
+  const RES_NOISE = /\b\d+(\.\d+)?\s*(kg|g|gm|gms|gram|grams|ml|l|ltr|litre|liter|pcs|pc|piece|pieces|pack|packet|no|nos)\b/g;
+  const RES_FILLER = /\b(pack of|combo|value|family|fresh|premium|select|classic|regular|original|natural|pure|farm)\b/g;
+
+  function resolveIng(text){
+    const raw = String(text||'').toLowerCase();
+    if (!raw.trim()) return null;
+    const t = raw.replace(RES_NOISE,' ').replace(RES_FILLER,' ')
+                 .replace(/[^a-z\s]/g,' ').replace(/\s+/g,' ').trim();
+    if (!t) return null;
+    const common = ingredients.filter(i => i.common === 'yes');
+    if (!common.length) return null;
+    const namesOf = i => [i.name].concat(i.aliases || []);
+    const esc2 = s => s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+
+    let hit = common.find(i => namesOf(i).some(n => n === t));
+    if (hit) return { ing:hit, confidence:'exact' };
+
+    // Longest match wins, across every row and every alias. Not first match —
+    // that is what keeps "coconut oil" from collapsing into "oil".
+    let best=null, bestLen=0;
+    common.forEach(i => namesOf(i).forEach(n => {
+      if (n.length <= bestLen) return;
+      if (new RegExp('(^|\\s)'+esc2(n)+'($|\\s)').test(t)){ best=i; bestLen=n.length; }
+    }));
+    if (best) return { ing:best, confidence:'contained' };
+
+    const toks = t.split(' ').filter(Boolean);
+    let tBest=null, tLen=0;
+    common.forEach(i => namesOf(i).forEach(n => {
+      const w = n.split(' ').filter(Boolean);
+      if (w.length <= tLen) return;
+      if (w.every(x => toks.indexOf(x) > -1)){ tBest=i; tLen=w.length; }
+    }));
+    if (tBest) return { ing:tBest, confidence:'tokens' };
+    return { ing:null, confidence:'none' };
+  }
+
+  // Rewrite one entry line to its canonical food name, keeping the quantity intact.
+  // Returns the line unchanged when nothing resolves — a line the resolver doesn't
+  // recognise is far more likely to be a real food it hasn't got than a mistake,
+  // and silently dropping it would lose stock.
+  function canonLine(line){
+    const s = String(line||'').trim();
+    if (!s) return s;
+    // Split the quantity off the same way commitKitchen does, so canonicalising
+    // and parsing can't disagree about where the name ends.
+    let name = s, qty = '';
+    const m = s.match(/^(.*?)[\s\-–:]*([\d.]+\s*(?:kg|g|l|ml|pcs?|pieces?|packs?|dozen)?)\s*$/i);
+    const m2 = s.match(/^([\d.]+\s*(?:kg|g|l|ml|pcs?|pieces?|packs?|dozen)?)\s+(.*)$/i);
+    if (m && m[1].trim()){ name = m[1].trim(); qty = m[2].trim(); }
+    else if (m2){ name = m2[2].trim(); qty = m2[1].trim(); }
+    const r = resolveIng(name);
+    if (!r || !r.ing) return s;
+    return r.ing.name + (qty ? ' ' + qty : '');
+  }
+
+  // Canonicalise a whole block and report what changed, so the rewrite is visible
+  // rather than something the app did to your stock behind your back.
+  function canonBlock(text){
+    const lines = String(text||'').split('\n');
+    const changes = [];
+    const out = lines.map(l => {
+      const c = canonLine(l);
+      if (c !== l.trim() && l.trim()) changes.push({ from:l.trim(), to:c });
+      return c;
+    });
+    return { text: out.join('\n'), changes };
+  }
+
+  // ══════════ MACRO SETUP (v3.8) ══════════
+  // A one-time-ish maintenance screen, deliberately not a tab: seeding the
+  // ingredient tables, merging the duplicated inventory rows, and drafting the
+  // top-20 recipes are things done once and then rarely. Putting them in the nav
+  // would spend permanent screen real estate on a job that ends.
+
+  async function loadIngredients(force){
+    // 560 static rows. Fetched once per session and held — putting this on the
+    // 30s sync would undo the batching work entirely.
+    if (ingredients.length && !force) return ingredients;
+    const r = await sheetGet('getIngredients');
+    ingredients = (r && r.ingredients) || [];
+    ingIndex = {};
+    ingredients.forEach(i => { ingIndex[i.id] = i; });
+    return ingredients;
+  }
+
+  function openMacroSetup(){
+    openSheet(`
+      <h2>Macro data</h2>
+      <p class="muted" style="margin:8px 0 16px;">One-time setup. Run these in order.</p>
+      <div id="ms-status" class="muted" style="margin-bottom:14px;"></div>
+      <div class="btn-row" style="flex-direction:column;gap:8px;">
+        <button onclick="msSeed()">1 · Load ingredient tables</button>
+        <button onclick="msCanonicalise()">2 · Merge duplicate stock</button>
+        <button onclick="msRecipes()">3 · Draft top-20 recipes</button>
+        <button onclick="msArchive()">4 · Archive old estimates</button>
+      </div>
+      <div class="btn-row" style="margin-top:16px;">
+        <button onclick="closeSheet()">Done</button>
+      </div>`);
+    msStatus('');
+  }
+  function msStatus(msg){
+    const el = document.getElementById('ms-status');
+    if (el) el.innerHTML = msg;
+  }
+
+  // Step 1. The CSVs ship alongside the app rather than being pasted by hand —
+  // 560 rows through a textarea is a data-entry job nobody should do twice.
+  async function msSeed(){
+    msStatus('Loading ingredient tables<span class="dots"></span>');
+    try {
+      const [ingCsv, mCsv] = await Promise.all([
+        fetch('Ingredients-seed.csv').then(r=>r.text()),
+        fetch('Measures-seed.csv').then(r=>r.text())
+      ]);
+      const ingRows = parseSeedCSV(ingCsv);
+      const mRows   = parseSeedCSV(mCsv);
+      // Posted in chunks: one payload of 560 rows risks the Apps Script limit,
+      // and a half-written table is worse than a slow one.
+      const a = await sheetPost({ action:'seedTable', sheet:'Ingredients', rows:ingRows });
+      const b = await sheetPost({ action:'seedTable', sheet:'Measures',    rows:mRows });
+      await loadIngredients(true);
+      msStatus(`Loaded ${(a&&a.written)||0} ingredients, ${(b&&b.written)||0} measures` +
+               (b && b.preserved ? ` — kept ${b.preserved} weighed value(s)` : ''));
+    } catch(e){ msStatus('Could not load the CSVs. Are they next to index.html?'); }
+  }
+
+  function parseSeedCSV(text){
+    const lines = String(text||'').trim().split('\n');
+    const out = [];
+    for (let i=1;i<lines.length;i++){
+      const l = lines[i]; if (!l.trim()) continue;
+      const v=[]; let cur='', q=false;
+      for (const ch of l){
+        if (q){ if (ch==='"') q=false; else cur+=ch; }
+        else if (ch==='"') q=true;
+        else if (ch===','){ v.push(cur); cur=''; }
+        else cur+=ch;
+      }
+      v.push(cur);
+      out.push(v);
+    }
+    return out;
+  }
+
+  // Step 2. Preview first, always. Rewriting the whole kitchen on a bad match is
+  // not something to find out about afterwards.
+  async function msCanonicalise(){
+    msStatus('Checking stock<span class="dots"></span>');
+    const p = await sheetPost({ action:'canonicaliseInventory' });
+    if (!p || !p.preview){ msStatus('Could not read the inventory.'); return; }
+    if (!p.wouldMerge.length){
+      msStatus(`Nothing to merge — ${p.rowsBefore} rows, all distinct.` +
+        (p.unresolved.length ? `<br>${p.unresolved.length} not recognised as food (that's fine).` : ''));
+      return;
+    }
+    msStatus(
+      `<b>${p.rowsBefore} rows → ${p.rowsAfter}</b><br>` +
+      p.wouldMerge.slice(0,8).map(m=>`${esc(m.from.join(' + '))} → <b>${esc(m.into)}</b>`).join('<br>') +
+      (p.wouldMerge.length>8 ? `<br>…and ${p.wouldMerge.length-8} more` : '') +
+      `<div class="btn-row" style="margin-top:12px;">
+         <button class="btn-primary" onclick="msCanonApply()">Merge them</button>
+       </div>`);
+  }
+  async function msCanonApply(){
+    msStatus('Merging<span class="dots"></span>');
+    const r = await sheetPost({ action:'canonicaliseInventory', apply:true });
+    msStatus(r && r.success ? `Merged. ${r.rowsBefore} rows → ${r.rowsAfter}.` : 'Merge failed.');
+    syncAll(true);
+  }
+
+  // Step 3. Claude drafts all 20, then one approval sitting.
+  let draftRecipes = [];
+  async function msRecipes(){
+    msStatus('Finding your most-cooked dishes<span class="dots"></span>');
+    const top = await sheetPost({ action:'getTopDishes', limit:20 });
+    const dishes = ((top && top.dishes) || []).filter(d => !d.hasRecipe);
+    if (!dishes.length){ msStatus('Every top dish already has a recipe.'); return; }
+    await loadIngredients();
+    if (!ingredients.length){ msStatus('Load the ingredient tables first (step 1).'); return; }
+
+    msStatus(`Drafting ${dishes.length} recipes<span class="dots"></span>`);
+    // The model is constrained to the ingredient vocabulary it is given. Letting it
+    // invent an ingredient name would produce a recipe that computes to nothing,
+    // which is exactly the unverifiable-guess problem this replaces.
+    const vocab = ingredients.filter(i=>i.common==='yes')
+      .map(i=>`${i.id}=${i.name}`).join(', ');
+    draftRecipes = [];
+    for (const d of dishes){
+      try {
+        const r = await askJSON(
+          `Indian home cooking. Give the ingredients for "${d.dish}" for 4 people.\n` +
+          `Use ONLY these ingredient codes: ${vocab}\n` +
+          `Return {"items":[{"ing":"CODE","g":RAW_GRAMS}],"yieldGrams":COOKED_WEIGHT_TOTAL,"servings":4}\n` +
+          `g is the RAW weight going into the pot. yieldGrams is what comes out after ` +
+          `cooking (rice roughly triples, dal absorbs water, sabzi loses some). ` +
+          `Include cooking oil. Omit salt and water.`, 700);
+        if (r && Array.isArray(r.items) && r.items.length){
+          r.items = r.items.filter(it => ingIndex[it.ing] && +it.g > 0);
+          draftRecipes.push({ dish:d.dish, dishID:d.dishID || d.dish.toLowerCase(),
+                              items:r.items, yieldGrams:+r.yieldGrams||0, servings:+r.servings||4 });
+        }
+      } catch(e){ /* one bad draft must not sink the batch */ }
+      msStatus(`Drafted ${draftRecipes.length}/${dishes.length}<span class="dots"></span>`);
+    }
+    if (!draftRecipes.length){ msStatus('No drafts came back. Try again.'); return; }
+    renderRecipeApproval();
+  }
+
+  function recipeMacros(rec){
+    let kcal=0,p=0,c=0,f=0,fib=0;
+    (rec.items||[]).forEach(it=>{
+      const g = ingIndex[it.ing]; if (!g) return;
+      const k = (+it.g||0)/100;
+      kcal+=g.kcal*k; p+=g.p*k; c+=g.c*k; f+=g.f*k; fib+=g.fib*k;
+    });
+    const s = Math.max(1, +rec.servings||1);
+    return { kcal:Math.round(kcal/s), p:Math.round(p/s), c:Math.round(c/s),
+             f:Math.round(f/s), fib:Math.round(fib/s) };
+  }
+
+  // One sitting: every draft on screen with its computed per-serving macros, so
+  // an implausible one is visible at a glance rather than after a week of logs.
+  // Each row opens an editor — approve-or-skip alone meant a recipe that was 90%
+  // right had to be thrown away whole.
+  function renderRecipeApproval(){
+    openSheet(`
+      <h2>Approve recipes</h2>
+      <p class="muted" style="margin:8px 0 4px;">
+        ${draftRecipes.length} drafts. Per-serving macros are computed from the
+        ingredients, not guessed — if a number looks wrong, the grams are wrong.
+        Tap one to fix it.
+      </p>
+      <div style="max-height:52vh;overflow:auto;margin:12px 0;">
+        ${draftRecipes.map((r,i)=>{
+          const m = recipeMacros(r);
+          return `<div style="padding:10px 0;border-bottom:0.5px solid var(--border);">
+            <div class="row" style="gap:10px;align-items:flex-start;">
+              <input type="checkbox" id="rx-${i}" ${r.skip?'':'checked'} style="margin-top:3px;">
+              <span style="flex:1;" onclick="editRecipe(${i})">
+                <b>${esc(r.dish)}</b>
+                <span class="mono" style="display:block;font-size:12px;color:var(--text3);margin-top:2px;">
+                  ${m.kcal} kcal · ${m.p}g P · ${m.c}g C · ${m.f}g F
+                  ${r.yieldGrams ? '' : ' · <span style="color:var(--mirch);">no yield — saves as draft</span>'}
+                </span>
+                <span style="display:block;font-size:11px;color:var(--text3);margin-top:3px;">
+                  ${esc(r.items.map(it=>(ingIndex[it.ing]?ingIndex[it.ing].name:it.ing)+' '+it.g+'g').join(', '))}
+                </span>
+              </span>
+              <button style="padding:4px 10px;font-size:12px;" onclick="editRecipe(${i})">Edit</button>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+      <div class="btn-row">
+        <button onclick="openMacroSetup()">Back</button>
+        <button class="btn-primary" onclick="msSaveRecipes()">Save checked</button>
+      </div>`);
+  }
+
+  // ── Recipe editor ──────────────────────────────────────────────────────────
+  // Grams, servings and yield are all editable, and the macros recompute on every
+  // keystroke. That live feedback is the point: the only way to tell a good recipe
+  // from a bad one is to see what the numbers do when you change a quantity.
+  let editIdx = -1;
+
+  // Leaving the approval list destroys its checkboxes, so their state is captured
+  // onto the drafts first. Without this, unchecking three bad recipes and then
+  // opening a fourth to fix it silently re-checks all three — and they get saved.
+  function captureChecks(){
+    draftRecipes.forEach((r,i)=>{
+      const el = document.getElementById('rx-'+i);
+      if (el) r.skip = !el.checked;
+    });
+  }
+
+  function editRecipe(i){
+    captureChecks();
+    editIdx = i;
+    const r = draftRecipes[i];
+    if (!r) return;
+    openSheet(`
+      <h2>${esc(r.dish)}</h2>
+      <div id="re-macros" class="mono" style="font-size:13px;color:var(--text3);margin:6px 0 14px;"></div>
+
+      <div class="row" style="gap:10px;margin-bottom:12px;">
+        <div class="field" style="flex:1;margin:0;">
+          <label>Serves</label>
+          <input class="mono" id="re-servings" type="number" min="1" value="${+r.servings||4}"
+                 oninput="reRecalc()">
+        </div>
+        <div class="field" style="flex:1;margin:0;">
+          <label>Cooked weight (g)</label>
+          <input class="mono" id="re-yield" type="number" min="0" value="${+r.yieldGrams||0}"
+                 oninput="reRecalc()" placeholder="0 = draft">
+        </div>
+      </div>
+
+      <div class="eyebrow" style="margin-bottom:6px;">Raw ingredients</div>
+      <div id="re-items" style="max-height:34vh;overflow:auto;"></div>
+
+      <div class="field" style="margin-top:12px;">
+        <label>Add an ingredient</label>
+        <input id="re-add" placeholder="paneer, toor dal, ghee…"
+               onkeydown="if(event.key==='Enter'){reAdd();return false;}">
+        <div id="re-add-hint" class="tiny" style="margin-top:4px;color:var(--text3);"></div>
+      </div>
+
+      <div class="btn-row" style="margin-top:14px;">
+        <button onclick="renderRecipeApproval()">Back</button>
+        <button class="btn-primary" onclick="reCommit()">Keep changes</button>
+      </div>`);
+    reRenderItems();
+  }
+
+  function reRenderItems(){
+    const r = draftRecipes[editIdx];
+    const box = document.getElementById('re-items');
+    if (!box || !r) return;
+    box.innerHTML = r.items.length ? r.items.map((it,j)=>{
+      const g = ingIndex[it.ing];
+      return `<div class="row" style="padding:7px 0;border-bottom:0.5px solid var(--border);gap:8px;">
+        <span style="flex:1;">${esc(g?g.name:it.ing)}
+          ${g&&g.source==='SUPPLEMENT-VERIFY'?'<span class="tiny" style="color:var(--mirch);"> ·unverified</span>':''}
+        </span>
+        <input class="mono" type="number" min="0" style="width:74px;text-align:right;"
+               id="re-g-${j}" value="${+it.g||0}" oninput="reRecalc()">
+        <span class="tiny" style="color:var(--text3);">g</span>
+        <button style="padding:2px 8px;font-size:12px;" onclick="reDrop(${j})">×</button>
+      </div>`;
+    }).join('') : '<div class="muted" style="padding:8px 0;">No ingredients yet.</div>';
+    reRecalc();
+  }
+
+  // Reads the inputs rather than trusting the model, so what is shown is always
+  // what is on screen — including a half-typed number.
+  function reCurrent(){
+    const r = draftRecipes[editIdx];
+    const items = r.items.map((it,j)=>({
+      ing: it.ing,
+      g: parseFloat((document.getElementById('re-g-'+j)||{}).value) || 0
+    }));
+    return {
+      items,
+      servings: Math.max(1, parseInt((document.getElementById('re-servings')||{}).value) || 1),
+      yieldGrams: Math.max(0, parseFloat((document.getElementById('re-yield')||{}).value) || 0)
+    };
+  }
+
+  function reRecalc(){
+    const el = document.getElementById('re-macros');
+    if (!el || editIdx < 0) return;
+    const c = reCurrent();
+    const m = recipeMacros(c);
+    const per = c.yieldGrams ? Math.round(c.yieldGrams / c.servings) : null;
+    el.innerHTML =
+      `<b style="color:var(--text);">${m.kcal} kcal</b> · ${m.p}g P · ${m.c}g C · ${m.f}g F · ${m.fib}g fibre` +
+      ` <span style="color:var(--text3);">per serving</span>` +
+      (per ? ` <span style="color:var(--text3);">(~${per}g)</span>`
+           : ` <span style="color:var(--mirch);">· no cooked weight — saves as draft</span>`);
+  }
+
+  function reDrop(j){
+    const r = draftRecipes[editIdx];
+    const c = reCurrent();
+    r.items = c.items.filter((_,k)=>k!==j);
+    r.servings = c.servings; r.yieldGrams = c.yieldGrams;
+    reRenderItems();
+  }
+
+  function reAdd(){
+    const inp = document.getElementById('re-add');
+    const hint = document.getElementById('re-add-hint');
+    const q = (inp.value||'').trim();
+    if (!q) return;
+    // Resolved through the same matcher as the inventory, so "toor dal" and
+    // "arhar" both land on the right row and the recipe can never reference an
+    // ingredient code that doesn't exist.
+    const r = resolveIng(q);
+    if (!r || !r.ing){
+      hint.innerHTML = `<span style="color:var(--mirch);">No ingredient matches "${esc(q)}".</span>`;
+      return;
+    }
+    const rec = draftRecipes[editIdx];
+    const c = reCurrent();
+    rec.items = c.items; rec.servings = c.servings; rec.yieldGrams = c.yieldGrams;
+    if (rec.items.some(it => it.ing === r.ing.id)){
+      hint.innerHTML = `<span style="color:var(--text3);">${esc(r.ing.name)} is already in this recipe.</span>`;
+      return;
+    }
+    rec.items.push({ ing:r.ing.id, g:50 });
+    inp.value = '';
+    hint.textContent = `Added ${r.ing.name} at 50g — adjust it.`;
+    reRenderItems();
+  }
+
+  function reCommit(){
+    const r = draftRecipes[editIdx];
+    const c = reCurrent();
+    r.items = c.items.filter(it => it.g > 0);
+    r.servings = c.servings;
+    r.yieldGrams = c.yieldGrams;
+    r.edited = true;
+    renderRecipeApproval();
+  }
+
+  async function msSaveRecipes(){
+    captureChecks();
+    const keep = draftRecipes.filter(r => !r.skip);
+    // toast, not msStatus: the #ms-status element belongs to the setup sheet and
+    // does not exist while the approval list is open, so msStatus would no-op here
+    // and the tap would look like nothing happened.
+    if (!keep.length){ toast('Nothing checked — nothing saved'); return; }
+    openMacroSetup();
+    msStatus(`Saving ${keep.length}<span class="dots"></span>`);
+    let ok=0, draft=0;
+    for (const r of keep){
+      const res = await sheetPost({ action:'saveRecipe', dishID:r.dishID, dish:r.dish,
+        items:r.items, yieldGrams:r.yieldGrams, servings:r.servings,
+        // Provenance matters later: an edited recipe carries a human's judgement
+        // about the grams and should not be silently re-drafted by a future batch.
+        source: r.edited ? 'edited' : 'claude-draft', updatedBy: activePerson || '' });
+      if (res && res.success){ ok++; if (res.status==='draft') draft++; }
+    }
+    msStatus(`Saved ${ok} recipe(s)` + (draft?`, ${draft} as draft (no yield).`:'.'));
+    syncAll(true);
+  }
+
+  async function msArchive(){
+    msStatus('Archiving old estimates<span class="dots"></span>');
+    const r = await sheetPost({ action:'archiveDishMacros' });
+    msStatus(r && r.success
+      ? `Archived ${r.archived} of ${r.total}. Old values kept in the Archived* columns.`
+      : 'Archive failed.');
+    syncAll(true);
+  }
 
   // ══════════ KITCHEN ══════════
   const CATEGORIES = {
@@ -3520,7 +4013,14 @@
     const status = document.getElementById('k-status');
     status.textContent = 'Saving…';
 
-    const parsed = lines.map(l=>{
+    // v3.9. Typed and spoken lines get the same treatment as scanned ones —
+    // "amul dahi" typed by hand fragments the inventory exactly as badly as
+    // "Amul Masti Dahi 400 g" read off a screenshot. Canonicalising at the single
+    // choke point means every entry path is covered by one piece of code.
+    await loadIngredients();
+    const canon = lines.map(canonLine);
+
+    const parsed = canon.map(l=>{
       const m = l.match(/^(.*?)[\s\-–:]*([\d.]+\s*(?:kg|g|l|ml|pcs?|pieces?|packs?|dozen)?)\s*$/i);
       if (m && m[1].trim()) return { name:m[1].trim(), qty:m[2].trim() };
       const m2 = l.match(/^([\d.]+\s*(?:kg|g|l|ml|pcs?|pieces?|packs?|dozen)?)\s+(.*)$/i);
@@ -3552,17 +4052,48 @@
   }
 
   // After a home-cooked meal, propose deductions rather than applying them silently.
-  async function suggestDeduction(dish){
+  // v3.8: if the dish has a ready recipe, the deduction is ARITHMETIC — exact grams
+  // from the recipe scaled by servings, no model involved. That is the whole point
+  // of the recipe layer: "Boiled Eggs — 4" deducting 4 eggs is not a thing an LLM
+  // should be asked to estimate. The Claude path survives only for dishes with no
+  // recipe yet, and should shrink to nothing as the library fills in.
+  async function suggestDeduction(dish, servings){
     if (!inventory.length) return;
+    try {
+      const exact = await sheetPost({ action:'deductionForMeal',
+        dishID: String(dish||'').toLowerCase(), servings: servings || 1 });
+      if (exact && exact.exact && exact.deductions.length){
+        return renderDeductionSheet(dish, exact.deductions.map(d=>{
+          // Match the recipe's ingredient back to the stock row it should reduce.
+          const inv = inventory.find(i =>
+            String(i.name||'').toLowerCase().includes(String(d.name||'').toLowerCase()));
+          if (!inv) return null;
+          const have = parseFloat(inv.qty);
+          const left = isFinite(have) ? Math.max(0, Math.round((have - d.grams) * 10) / 10) : '';
+          return { item: inv.name, newQty: left };
+        }).filter(Boolean), true);
+      }
+    } catch(e){ /* fall through to the estimate */ }
+
     try {
       const r = await askJSON(
         `Someone cooked "${dish}" at home. From this kitchen stock, which items were likely used and how much is left?\n` +
         inventory.map(i=>`${i.name}: ${i.qty}`).join('\n') +
         `\nReturn an array of {item, newQty}. Only items genuinely used. Keep the same unit. Max 6 items.`, 500);
       if (!Array.isArray(r) || !r.length) return;
-      openSheet(`
+      renderDeductionSheet(dish, r, false);
+    } catch(e){ /* deduction is a convenience — never block the log on it */ }
+  }
+
+  // Whether the numbers came from a recipe or a guess changes what the user should
+  // trust, so the sheet says which. Presenting both identically is how an estimate
+  // quietly acquires the authority of a measurement.
+  function renderDeductionSheet(dish, r, exact){
+    openSheet(`
         <h2>Update stock after ${esc(dish)}?</h2>
-        <p class="muted" style="margin:8px 0 14px;">Best guess at what got used. Edit anything that's off.</p>
+        <p class="muted" style="margin:8px 0 14px;">${exact
+          ? 'Calculated from the recipe.'
+          : "Best guess at what got used. Edit anything that's off."}</p>
         ${r.map((x,i)=>`
           <div class="row" style="padding:9px 0;border-bottom:0.5px solid var(--border);">
             <span>${esc(x.item)}</span>
@@ -3572,7 +4103,6 @@
           <button onclick="closeSheet()">Skip</button>
           <button class="btn-primary" onclick='applyDeduction(${jsAttr(r.map(x=>x.item))})'>Update stock</button>
         </div>`);
-    } catch(e){ /* deduction is a convenience — never block the log on it */ }
   }
 
   async function applyDeduction(items){
@@ -4837,6 +5367,15 @@
         if (task === 'inventory-photo'){
           if (!d.items || !d.items.length) throw new Error('nothing found');
           text = d.items.map(i => i.name + (i.quantity ? ' ' + i.quantity : '')).join('\n');
+          // v3.9. Canonicalise HERE, on the way in, rather than leaving it to a
+          // cleanup pass later. A screenshot is where brand names enter the system
+          // ("Amul Taaza Toned Milk 500ml"), and every one that lands raw is a
+          // duplicate row someone has to merge afterwards. The rewrite goes into
+          // the box, not straight to the sheet, so it is reviewed before saving.
+          await loadIngredients();
+          const c = canonBlock(text);
+          text = c.text;
+          if (c.changes.length) photoCanonNote = c.changes.length;
         } else {
           text = (d.dish_name || 'Meal') +
                  (d.components && d.components.length ? ' — ' + d.components.join(', ') : '');
@@ -4850,7 +5389,10 @@
 
         const el = document.getElementById(targetId);
         el.value = (el.value.trim() ? el.value.trim() + '\n' : '') + text;
-        toast('Added from photo — check it before saving');
+        toast(photoCanonNote
+          ? `Added from photo · ${photoCanonNote} name${photoCanonNote>1?'s':''} tidied — check before saving`
+          : 'Added from photo — check it before saving');
+        photoCanonNote = 0;
       } catch(e){ toast("Couldn't read that photo"); }
     };
     input.click();
