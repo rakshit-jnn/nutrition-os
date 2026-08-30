@@ -241,6 +241,22 @@
 <body>
 <div class="wrap">
 
+  <!-- ═══ HOUSEHOLD GATE (v4.0) ═══ -->
+  <!-- Shown before onboarding on a device that has never been set up. A household
+       is the unit the data belongs to; a person is who inside it is eating. -->
+  <div class="overlay hidden" id="hhgate">
+    <div class="pad" id="hhgate-body"></div>
+  </div>
+
+  <!-- ═══ COOK'S REPERTOIRE (v4.1) ═══ -->
+  <!-- The cold-start fix. A new kitchen inherits the shared dish library but not a
+       repertoire, and the menu ranks on CookKnows — so on day one every dish scores
+       the same and the menu is generic. Asking once, here, collapses two weeks of
+       learning into a minute. Household-level, so it is asked once per kitchen. -->
+  <div class="overlay hidden" id="cookseed">
+    <div class="pad" id="cookseed-body"></div>
+  </div>
+
   <!-- ═══ ONBOARDING ═══ -->
   <div class="overlay hidden" id="onb">
     <div class="pad" id="onb-body"></div>
@@ -523,7 +539,20 @@
   const VISION_API = '/api/vision';
   const MODEL      = 'claude-sonnet-4-5';
   const SHEET_URL  = 'https://script.google.com/macros/s/AKfycbxXDdY5y_QUVIML1Zb4nwTnuryI_Uqhe-EGwc_iDT_s5OZ9wJNcfWvILo4rCC5bN6XT/exec';
-  const VERSION    = 'v3.13';
+  const VERSION    = 'v4.3';
+
+  // ══════════ HOUSEHOLD (v4.0) ══════════
+  // Every request now carries which household it belongs to. Stored on the device
+  // once at setup — a phone belongs to a household the way a fridge does.
+  // Empty means "not set up yet", which is what triggers the gate at boot.
+  let HH     = localStorage.getItem('nos_hh')  || '';
+  let HH_PIN = localStorage.getItem('nos_pin') || '';
+  function setHousehold(hh, pin){
+    HH = hh; HH_PIN = pin;
+    localStorage.setItem('nos_hh', hh);
+    localStorage.setItem('nos_pin', pin);
+  }
+  function hhQuery(){ return HH ? '&hh=' + encodeURIComponent(HH) + '&pin=' + encodeURIComponent(HH_PIN) : ''; }
   const POLL_MS    = 30000;
 
   // ══════════ STATE ══════════
@@ -676,14 +705,21 @@
   // cached response for an identical GET and other devices' changes never appear.
   async function sheetGet(action, extra){
     try {
-      const q = SHEET_URL + '?action=' + action + (extra||'') + '&_ts=' + Date.now();
+      const q = SHEET_URL + '?action=' + action + (extra||'') + hhQuery() + '&_ts=' + Date.now();
       const r = await fetch(q, { cache:'no-store' });
       return await r.json();
     } catch(e){ console.error('GET '+action, e); return null; }
   }
   async function sheetPost(body){
     try {
-      const r = await fetch(SHEET_URL, { method:'POST', body:JSON.stringify(body), cache:'no-store' });
+      // Only attach when we actually have one. An empty hh is not "no household"
+      // to the backend — it falls through to the DEFAULT spreadsheet, so a
+      // half-configured device would quietly write into someone else's kitchen.
+      const payload = HH ? Object.assign({ hh:HH, pin:HH_PIN }, body) : body;
+      const r = await fetch(SHEET_URL, {
+        method:'POST',
+        body: JSON.stringify(payload),
+        cache:'no-store' });
       return await r.json();
     } catch(e){ console.error('POST', e); return null; }
   }
@@ -1058,7 +1094,7 @@
     if (streamBroken) throw new Error('stream unavailable');
     const r = await fetch(STREAM_API, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ model:MODEL, max_tokens:maxTokens||900,
+      body: JSON.stringify({ tier:'smart', hh:HH, max_tokens:maxTokens||900,
         messages:[{ role:'user', content: prompt + '\n\nRespond with JSON only. No prose, no markdown fences.' }] })
     });
     if (!r.ok || !r.body){ streamBroken = true; throw new Error('stream unavailable'); }
@@ -1090,20 +1126,43 @@
     return seen;
   }
 
-  async function askClaude(prompt, maxTokens){
+  async function askClaude(prompt, maxTokens, tier){
     const r = await fetch(CLAUDE_API, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ model:MODEL, max_tokens:maxTokens||900, messages:[{role:'user',content:prompt}] })
+      body: JSON.stringify({ tier:tier||'smart', hh:HH, max_tokens:maxTokens||900, messages:[{role:'user',content:prompt}] })
     });
     const d = await r.json();
     if (d.error) throw new Error(d.error.message || 'Claude unavailable');
     return (d.content||[]).map(b=>b.text||'').join('');
   }
-  async function askJSON(prompt, maxTokens){
-    const raw = await askClaude(prompt + '\n\nRespond with JSON only. No prose, no markdown fences.', maxTokens);
+  async function askJSON(prompt, maxTokens, tier){
+    const raw = await askClaude(prompt + '\n\nRespond with JSON only. No prose, no markdown fences.', maxTokens, tier);
     const clean = raw.replace(/```json|```/g,'').trim();
     const start = Math.min(...[clean.indexOf('{'), clean.indexOf('[')].filter(i=>i>=0));
     return parseLooseJSON(clean.slice(isFinite(start)?start:0));
+  }
+
+  // Roughly two thirds of the app's Claude calls are mechanical: phrase an order,
+  // estimate macros, parse a gym log, guess what got used from the shelf. None of
+  // them need Sonnet's judgement and all of them are on paths people wait for, so
+  // the cheaper, faster model is the better answer twice over. Menu choice, meal
+  // planning, recipes and teaching the cook a new dish stay on askJSON.
+  async function askFast(prompt, maxTokens){ return askJSON(prompt, maxTokens, 'fast'); }
+
+  // ══════════ INSTRUMENTATION (v4.0) ══════════
+  // Fire and forget, never awaited, never allowed to throw into a caller: an
+  // analytics write must not be able to break someone's dinner.
+  const evLogged = new Set();
+  function logEv(event, detail, onceKey){
+    try {
+      if (onceKey){
+        const k = today() + '|' + event + '|' + onceKey;
+        if (evLogged.has(k)) return;
+        evLogged.add(k);
+      }
+      sheetPost({ action:'logEvent', event:event, detail:detail||'',
+                  person:activePerson||'', version:VERSION });
+    } catch(e){}
   }
 
   // A long answer that hits max_tokens is cut mid-object, and JSON.parse throws — which
@@ -1898,7 +1957,7 @@
       // The exclusion list is the point: never spend a call regenerating the fixed list.
       const exclude = TASTE_SEED.dish.concat(TASTE_SEED.ingredient)
         .concat(tasteDiscovered.map(d=>d.name)).concat(taste.avoid);
-      const r = await askJSON(
+      const r = await askFast(
         `Someone in a ${REGIONS[region()].name} household likes: ${liked.join(', ')}.\n` +
         `Suggest 5 more everyday Indian foods they would probably also like — dishes a home ` +
         `cook actually makes, or ingredients, named the way a Delhi household would say them.\n` +
@@ -2811,7 +2870,7 @@
     for (let i = 0; i < dishes.length && i < 54; i += 18){
       const chunk = dishes.slice(i, i + 18);
       try {
-        const r = await askJSON(
+        const r = await askFast(
           `For each dish below, give a sensible single-person portion for someone eating ` +
           `about ${me_.cal} kcal and ${me_.protein} g protein a day, and the macros for ` +
           `THAT portion.\n${chunk.join('\n')}\n` +
@@ -3270,7 +3329,7 @@
     openSheet(`<h2>What this plan needs</h2>
       <div class="muted" style="margin-top:12px;">Checking the kitchen<span class="dots"></span></div>`);
     try {
-      const r = await askJSON(
+      const r = await askFast(
         `A ${REGIONS[region()].name} household has planned these dishes over the coming days:\n${dishes.join(', ')}.\n` +
         `The kitchen currently has: ${inventory.map(i=>i.name+' ('+i.qty+')').join(', ') || 'nothing'}.\n` +
         `Return an array of {item, qty, cat} for staples that are missing or will run out. ` +
@@ -3386,6 +3445,9 @@
     const due = menu().map(m=>({ m, pr:prepFor(m) })).filter(x=>x.pr)
                       .sort((a,b)=>b.pr.hours - a.pr.hours)[0];
     if (!due) return '';
+    // Once per dish per day. This renders on every menu repaint, and an event per
+    // repaint would make check 3 count keystrokes rather than nudges.
+    logEv('prep_shown', due.m.dish, due.m.dish);
     const late = due.pr.hours > left;
     return `<div style="margin-top:11px;border-left:2px solid ${late?'var(--mirch)':'var(--haldi)'};
         background:${late?'var(--mirch-bg)':'var(--haldi-bg)'};padding:9px 11px;">
@@ -3408,7 +3470,7 @@
     orderLines = items.map(i=>`${i.dish} — ${i.note}`);
     renderCookSheet('आज रात', lang, items.map(i=>({ dish:i.dish, for:i.for })), { noTeach:true });
     try {
-      const r = await askJSON(
+      const r = await askFast(
         `A home cook in India who speaks ${lang.name} needs a short spoken instruction to do TONIGHT so ` +
         `tomorrow's cooking is possible: ${items.map(i=>i.dish+' — '+i.note).join('; ')}.\n` +
         `One line each, everyday spoken ${lang.name}, digits for all times and quantities. ` +
@@ -3657,6 +3719,7 @@
       if (undone) return null;
       return (async () => {
         for (const person of who)
+          logEv('dish_logged', dish);
           await sheetPost({ action:'logMeal', mealName:dish, mealType:type, loggedBy:person,
                             source:opts.source || 'manual',
                             closeMenuRow:true, menuDate:today() });
@@ -3702,7 +3765,7 @@
     if (estimating[key]) return estimating[key];
     estimating[key] = (async () => {
       try {
-        const r = await askJSON(
+        const r = await askFast(
           `Estimate macros for one typical Indian home serving of "${dish}". ` +
           `Keys: kcal, p, c, f, fib — protein, carbs, fat and dietary fibre in grams, integers.`, 200);
         // A re-estimate is only here to supply the missing fibre, so the existing
@@ -4465,7 +4528,7 @@
     } catch(e){ /* fall through to the estimate */ }
 
     try {
-      const r = await askJSON(
+      const r = await askFast(
         `Someone cooked "${dish}" at home. From this kitchen stock, which items were likely used and how much is left?\n` +
         inventory.map(i=>`${i.name}: ${i.qty}`).join('\n') +
         `\nReturn an array of {item, newQty}. Only items genuinely used. Keep the same unit. Max 6 items.`, 500);
@@ -4511,7 +4574,7 @@
     const low = lowStock();
     let items = low.map(i=>({ item:i.name, qty:'restock', cat:categorize(i.name) }));
     try {
-      const r = await askJSON(
+      const r = await askFast(
         `Household kitchen. Running low: ${low.map(i=>i.name+' ('+i.qty+')').join(', ') || 'nothing'}.\n` +
         `Already stocked: ${inventory.map(i=>i.name).join(', ') || 'nothing'}.\n` +
         `Diets: ${Object.entries(members).map(([n,p])=>n+': '+p.diet).join('; ')}.\n` +
@@ -4847,6 +4910,10 @@
 
   async function loadMenu(force, newPage){
     if (loadingMenu) return;
+    // Check 5 (first stop, not second opinion) turns on this event landing BEFORE
+    // the day's first dish_logged, so it is emitted on every path into the menu —
+    // shared, cached or generated — not only the expensive one.
+    logEv('menu_view', activeSlot(), activeSlot());
     const others = Object.keys(members).length;
     const key = activeSlot() + '|' + others + '|' + craving + '|' + scopeKey();
     if (!force && key === lastMenuFor && pages.length) return;
@@ -4981,6 +5048,7 @@
       } catch(e){
         r = await askJSON(menuPrompt, 1100);
       }
+      logEv('menu_generated', slot);
       let newMenu = (Array.isArray(r) ? r : []).map(x=>({
         dish:x.dish, for:Array.isArray(x.for)?x.for:[activePerson],
         protein:+x.protein||0, portion:x.portion||'', missing:x.missing||[],
@@ -5372,7 +5440,7 @@
     const m = menu()[i];
     if (!m || m.details !== null) return;   // already loaded or loading
     try {
-      const r = await askJSON(
+      const r = await askFast(
         `Describe the dish "${m.dish}" for an Indian household deciding whether to cook it today.\n` +
         `Write the way one family member would explain it to another — plain, simple English, ` +
         `everyday Indian food words (sabzi, dal, roti, curd, tadka) rather than chef or ` +
@@ -5593,7 +5661,7 @@
         const pr = prepFor(d);
         return `${d.dish} for ${d.for.length} (${whoLabel(d.for)})` + (pr ? ` [advance prep: ${pr.note}]` : '');
       }).join('; ');
-      const r = await askJSON(
+      const r = await askFast(
         `A home cook in India who speaks ${lang.name} needs a short spoken order for ${activeSlot()}: ${list}.\n` +
         `Do NOT give cooking instructions or methods — she knows how to cook. Only say WHAT to make and HOW MUCH.\n` +
         `One line per dish: dish name, then portion as a number of people or units, using digits ` +
@@ -5863,7 +5931,7 @@
     const box = document.getElementById('w-confirm');
     box.innerHTML = `<div class="card"><div class="muted">Reading it<span class="dots"></span></div></div>`;
     try {
-      const r = await askJSON(
+      const r = await askFast(
         `Parse this gym log into structured data: "${txt}"\n` +
         `Return an array of {exercise, muscleGroup, sets:[{reps, weight}]}. ` +
         `weight in kg, 0 for bodyweight. muscleGroup from: chest, back, legs, shoulders, arms, core, cardio.`, 700);
@@ -6482,6 +6550,214 @@
     else if (photo) toast('Sent with the screenshot — thank you');
   }
 
+  // ══════════ COOK'S REPERTOIRE (v4.1) ══════════
+  // Deliberately a tap-grid and not a text box. "Name ten dishes your cook makes"
+  // is a surprisingly hard question cold — people freeze, or list three. Reading a
+  // list and tapping what you recognise is the same information at a fraction of
+  // the effort, and it lands the names in the app's own spelling instead of ten
+  // near-misses the dish catalog then has to reconcile.
+  let seedPicks = new Set();
+  let seedPool  = [];
+
+  function cookName(){ return (settings.cookName || '').trim(); }
+
+  // Region seed first — a Kolkata kitchen should not have to scroll past rajma to
+  // find aloo posto — then the general everyday list, deduped, in that order.
+  function buildSeedPool(){
+    const out = [], seen = {};
+    const add = d => {
+      const k = String(d).trim().toLowerCase();
+      if (!k || seen[k]) return;
+      seen[k] = 1; out.push(String(d).trim());
+    };
+    (REGIONS[region()].seed || []).forEach(add);
+    TASTE_SEED.dish.forEach(add);
+    // Anything the household already eats but hasn't been marked — the second
+    // person to set up a phone shouldn't be shown a list missing their own food.
+    // dishMacros is keyed BY the dish name (lowercased) and carries no display
+    // field, so the key is the name; title-case it to sit level with the seeds.
+    Object.keys(dishMacros).forEach(k => {
+      if (seen[k]) return;
+      add(k.replace(/\b[a-z]/g, c => c.toUpperCase()));
+    });
+    return out;
+  }
+
+  // Shown when the kitchen has barely any repertoire on record. Data-driven rather
+  // than a "is this the first person" flag: if whoever created the house skipped
+  // it, the next person to set up a phone gets asked instead of nobody being asked.
+  function repertoireCount(){
+    return Object.keys(dishMacros).filter(k => (dishMacros[k]||{}).knows === 'yes').length;
+  }
+
+  function maybeCookSeed(){
+    if (repertoireCount() >= 5) return false;
+    startCookSeed();
+    return true;
+  }
+
+  function startCookSeed(){
+    seedPicks = new Set();
+    seedPool = buildSeedPool();
+    document.getElementById('cookseed').classList.remove('hidden');
+    renderCookSeed();
+  }
+
+  function renderCookSeed(){
+    const who = cookName();
+    const b = document.getElementById('cookseed-body');
+    const count = seedPicks.size;
+    b.innerHTML = `
+      <h1>What does ${who ? esc(who) : 'your cook'} already make?</h1>
+      <p class="muted" style="margin:10px 0 6px;">
+        Tap everything she cooks without being asked. This is what the menu picks
+        from — ten is plenty to start, and it learns the rest as you go.
+      </p>
+      <p class="muted mono" style="font-size:12px;margin:0 0 18px;">${count} picked</p>
+      <div class="chips" style="gap:7px;flex-wrap:wrap;">
+        ${seedPool.map((d,i)=>`<button class="chip ${seedPicks.has(i)?'on':''}"
+          onclick="toggleSeedDish(${i})">${esc(d)}</button>`).join('')}
+      </div>
+      <div class="field" style="margin-top:18px;">
+        <input id="cs-add" placeholder="Something else she makes"
+               onkeydown="if(event.key==='Enter')addSeedDish()">
+      </div>
+      <button style="width:100%;margin-top:9px;padding:9px;min-height:0;font-size:13px;"
+        onclick="addSeedDish()">Add it</button>
+      <button style="width:100%;margin-top:20px;" onclick="finishCookSeed()">
+        ${count ? `Save ${count} ${count===1?'dish':'dishes'}` : 'Save'}</button>
+      <button class="ghost" style="width:100%;margin-top:9px;"
+        onclick="finishCookSeed(true)">Skip — I'll do it later</button>`;
+  }
+
+  function toggleSeedDish(i){
+    if (seedPicks.has(i)) seedPicks.delete(i); else seedPicks.add(i);
+    renderCookSeed();
+  }
+
+  function addSeedDish(){
+    const el = document.getElementById('cs-add');
+    const name = ((el && el.value) || '').trim();
+    if (!name){ toast('Type a dish first'); return; }
+    const at = seedPool.findIndex(d => d.toLowerCase() === name.toLowerCase());
+    if (at > -1){ seedPicks.add(at); }
+    else { seedPool.unshift(name); seedPicks = new Set([0, ...[...seedPicks].map(i=>i+1)]); }
+    renderCookSeed();
+  }
+
+  async function finishCookSeed(skip){
+    const dishes = skip ? [] : [...seedPicks].map(i => seedPool[i]).filter(Boolean);
+    document.getElementById('cookseed').classList.add('hidden');
+
+    if (dishes.length){
+      // Applied locally first so the very next menu already ranks on it. Waiting
+      // for the round trip would mean the first menu — the one that decides whether
+      // they come back — is the only one generated without a repertoire.
+      dishes.forEach(d => {
+        const k = d.toLowerCase();
+        if (!dishMacros[k]) dishMacros[k] = { kcal:0,p:0,c:0,f:0,source:'estimated',rating:'',ratingCount:0 };
+        dishMacros[k].knows = 'yes';
+      });
+      toast(`Saved ${dishes.length} ${dishes.length===1?'dish':'dishes'}`);
+      // source:'seeded' is what keeps check 6 honest — these dishes were tapped,
+      // not learned, and the check counts only what the app worked out itself.
+      sheetPost({ action:'setCookKnowsBulk', dishes:dishes, knows:'yes', source:'seeded',
+                  updatedBy:activePerson || 'App' })
+        .then(r => { if (!r || !r.success) toast("Couldn't save those — try again from You → Cook settings"); });
+      logEv('repertoire_seeded', String(dishes.length));
+    }
+
+    renderAll();
+    boot();
+  }
+
+  // ══════════ HOUSEHOLD GATE (v4.0) ══════════
+  // Two doors. The first person in a house creates it and picks a PIN; everyone
+  // else joins with the name and PIN they were given. Joining is the common case
+  // after the first phone, so it is not hidden behind a "advanced" link.
+  let hhMode = 'new';
+  function startHouseholdGate(){
+    document.getElementById('hhgate').classList.remove('hidden');
+    renderHhGate();
+  }
+  function setHhMode(m){ hhMode = m; renderHhGate(); }
+
+  function renderHhGate(){
+    const b = document.getElementById('hhgate-body');
+    b.innerHTML = `
+      <h1>Set up your kitchen</h1>
+      <p class="muted" style="margin:10px 0 22px;">
+        Everyone in the house shares one kitchen — the same menu, the same shelf, the same cook.
+      </p>
+      <div class="chips" style="margin-bottom:18px;">
+        <button class="chip ${hhMode==='new'?'on':''}" onclick="setHhMode('new')">New kitchen</button>
+        <button class="chip ${hhMode==='join'?'on':''}" onclick="setHhMode('join')">Join one</button>
+      </div>
+      ${hhMode === 'new' ? `
+        <div class="field"><input id="hh-name" placeholder="House name, e.g. Sharma home"></div>
+        <div class="field" style="margin-top:10px;">
+          <input id="hh-cook" placeholder="Cook's name (optional)"></div>
+        <div class="field" style="margin-top:10px;">
+          <input id="hh-pin" inputmode="numeric" maxlength="8" placeholder="Choose a PIN"></div>
+        <p class="muted" style="font-size:12px;margin:10px 0 18px;">
+          Anyone else in the house enters the house name and this PIN to join.
+        </p>
+        <button style="width:100%;" onclick="createHh()">Create kitchen</button>
+      ` : `
+        <div class="field"><input id="hh-join-id" placeholder="House name you were given"></div>
+        <div class="field" style="margin-top:10px;">
+          <input id="hh-join-pin" inputmode="numeric" maxlength="8" placeholder="PIN"></div>
+        <button style="width:100%;margin-top:18px;" onclick="joinHh()">Join</button>
+      `}
+      <div id="hh-msg" class="muted" style="font-size:13px;margin-top:14px;"></div>`;
+  }
+
+  function hhMsg(t){ const el = document.getElementById('hh-msg'); if (el) el.textContent = t; }
+
+  async function createHh(){
+    const name = (document.getElementById('hh-name').value||'').trim();
+    const pin  = (document.getElementById('hh-pin').value||'').trim();
+    const cook = (document.getElementById('hh-cook').value||'').trim();
+    if (!name){ hhMsg('Give the house a name first.'); return; }
+    if (pin.length < 4){ hhMsg('A PIN needs at least 4 digits.'); return; }
+    hhMsg('Setting up…');
+    // No hh exists yet, so this one call deliberately goes out unauthenticated.
+    const r = await sheetPost({ action:'createHousehold', name:name, pin:pin,
+                                household: cook ? { cookName: cook } : {} });
+    if (!r || r.error || !r.hh){ hhMsg((r && r.error) || "Couldn't set that up. Try again."); return; }
+    setHousehold(r.hh, pin);
+    document.getElementById('hhgate').classList.add('hidden');
+    startOnboarding();
+  }
+
+  async function joinHh(){
+    const id  = (document.getElementById('hh-join-id').value||'').trim();
+    const pin = (document.getElementById('hh-join-pin').value||'').trim();
+    if (!id || !pin){ hhMsg('Both the house name and the PIN are needed.'); return; }
+    hhMsg('Checking…');
+    // Set first, then verify — whoami travels on the ordinary authenticated path,
+    // so a wrong PIN fails exactly the way every other request would.
+    const prev = [HH, HH_PIN];
+    setHousehold(id.toLowerCase(), pin);
+    const r = await sheetGet('whoami');
+    if (!r || r.error){
+      setHousehold(prev[0], prev[1]);
+      hhMsg((r && r.error) || "That house name and PIN didn't match.");
+      return;
+    }
+    document.getElementById('hhgate').classList.add('hidden');
+    // A device that already knows who lives here is a re-install or an upgrade
+    // from a pre-v4.0 build, not a new person. Sending it through onboarding
+    // would ask a returning household to re-enter everything it already has.
+    if (activePerson && Object.keys(members).length){
+      renderAll();
+      boot();
+      return;
+    }
+    startOnboarding();
+    syncAll(true).then(()=>{ if (onbStep === 0) renderOnb(); });
+  }
+
   // ══════════ ONBOARDING ══════════
   // Four steps, every one skippable, sensible defaults throughout — you should be
   // able to log your first meal inside a minute.
@@ -6708,13 +6984,26 @@
     saveLocal();
     document.getElementById('onb').classList.add('hidden');
     renderAll();
-    toast('All set. Log your first meal from Today.');
 
+    // The cook's language and the region are household facts, not personal ones —
+    // without this they lived only in the first person's onboarding and every
+    // later member's cook order came out in the wrong language.
+    await sheetPost({ action:'saveHousehold', person:name, settings:{
+      cookLang: onbData.cookLang || 'hi',
+      region:   onbData.region || '',
+      city:     onbData.city || ''
+    }});
     await sheetPost({ action:'updateMacros', person:name, calories:cal, protein, carbs, fat, weight });
     await sheetPost({ action:'savePreferences', person:name, diet:members[name].diet,
       likes:members[name].likes, dislikes:members[name].dislikes,
       allergies:members[name].allergies, favourites:members[name].favourites,
       picks:members[name].picks });
+
+    // The repertoire question comes last, after the sheet writes, because it needs
+    // dishMacros hydrated to know whether the kitchen already has one. If it does,
+    // this is a returning household and nobody gets asked again.
+    if (maybeCookSeed()) return;
+    toast('All set. Log your first meal from Today.');
     boot();
   }
 
@@ -6822,6 +7111,7 @@
   }
 
   async function boot(){
+    logEv('app_open');
     await syncAll(true);
     loadMenu();
     // Cost the last few dishes so the day bar has something real to show.
@@ -6842,6 +7132,13 @@
     if (window.speechSynthesis) speechSynthesis.getVoices();
 
     startPolling();
+
+    // A device with no household can't sync, because there is nothing yet to sync
+    // from. The gate therefore comes before onboarding, not alongside it.
+    if (!HH){
+      startHouseholdGate();
+      return;
+    }
 
     if (!activePerson || !Object.keys(members).length){
       startOnboarding();
