@@ -1,0 +1,15 @@
+{
+  "name": "nutrition-os",
+  "version": "4.3.0",
+  "private": true,
+  "description": "Nutrition OS — static frontend plus Netlify Functions proxying the Anthropic API.",
+  "scripts": {
+    "build": "echo 'no build step — index-v2.html is served as-is'"
+  },
+  "dependencies": {
+    "@netlify/blobs": "^8.1.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
