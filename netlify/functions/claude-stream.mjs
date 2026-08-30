@@ -16,6 +16,9 @@
 //
 // Requires a redirect in netlify.toml (see HANDOFF), same as /api/claude.
 
+// Metering and model tiering are shared with /api/claude — see lib/claude-common.mjs.
+import { meter, MODELS, CAPPED_BODY } from './lib/claude-common.mjs';
+
 export default async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, {
@@ -40,6 +43,20 @@ export default async (req) => {
     return new Response(JSON.stringify({ error: 'API key not configured' }), { status: 500 });
   }
 
+  const { hh, tier, ...payload } = body;
+
+  const gate = await meter(hh);
+  if (!gate.ok) {
+    // A friendly, parseable refusal. The client shows the message; it must not
+    // look like a crash, because to the user this isn't an error — it's a limit.
+    return new Response(CAPPED_BODY, {
+      status: 429,
+      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } });
+  }
+
+  // The client may still send a raw model name (old HTML); a tier wins when given.
+  if (tier && MODELS[tier]) payload.model = MODELS[tier];
+
   const upstream = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -49,7 +66,7 @@ export default async (req) => {
     },
     // `stream: true` is forced here rather than trusted from the client, so this
     // endpoint cannot be called in a way that makes it buffer.
-    body: JSON.stringify({ ...body, stream: true })
+    body: JSON.stringify({ ...payload, stream: true })
   });
 
   // An upstream error arrives as ordinary JSON, not SSE. Passing it through as a
