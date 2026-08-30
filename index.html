@@ -80,6 +80,24 @@
     box-shadow:0 1px 2px rgba(0,0,0,.05), 0 6px 18px -8px rgba(0,0,0,.14);
   }
   .card-menu:empty { display:none; }
+  /* The Menu card is swiped between days, so the browser must not claim horizontal
+     drags for its own back-gesture or overscroll. `pan-y` keeps vertical scrolling
+     working, which is the whole reason this isn't `touch-action:none`. */
+  .card-menu { touch-action: pan-y; }
+  /* Only the day's contents move. The chips and the header stay put, so the card
+     reads as a fixed frame with the day sliding through it rather than the whole
+     card jumping. */
+  .menu-slide { animation: menuIn 190ms cubic-bezier(.22,.61,.36,1); }
+  @keyframes menuIn { from { opacity:0; transform:translateX(var(--slide-from,0)); }
+                        to { opacity:1; transform:none; } }
+  .day-dots { display:flex; align-items:center; gap:7px; }
+  .day-dot {
+    width:7px; height:7px; border-radius:50%; padding:0; min-height:0;
+    border:0; background:var(--border2); flex:0 0 auto; cursor:pointer;
+    transition: background 140ms ease, transform 140ms ease;
+  }
+  .day-dot.on { background:var(--dhania); transform:scale(1.25); }
+  .day-dot.live { box-shadow:0 0 0 2px var(--haldi); }
   .row { display:flex; align-items:center; justify-content:space-between; gap:10px; }
 
   button, .btn {
@@ -1451,18 +1469,25 @@
   // and stays empty unless someone opens the expander — the common case is one portion
   // for the whole dish, and asking for four inputs would be worse than not asking.
   let addPortions = [];
-  function addDishesToMenu(names, note){
+  function addDishesToMenu(names, note, wantDate, wantSlot){
     if (!names || !names.length) return;
     const dishes = names.map(n=>({ dish:n }));
     const everyone = Object.keys(members);
-    const slot = activeSlot(), date = menuDate();
+    // Called from Cook next this defaults to the slot Cook next is on; called from the
+    // Menu it defaults to the day and slot on screen. The DAY is now an explicit choice
+    // rather than derived from the slot, because "breakfast" at 8pm is genuinely
+    // ambiguous — it can mean this morning's, which you forgot to log, or tomorrow's,
+    // which you're planning. Deriving it always picked one and was silently wrong the
+    // other half of the time.
+    const slot = wantSlot || activeSlot();
+    const date = wantDate || slotDate(slot);
     addPortions = dishes.map(d=>{
       const base = suggestedPortion(d.dish);
       return { base:base, text:base, per:{}, open:false };
     });
     openSheet(`
       <h2>Add to the menu</h2>
-      <p class="muted" style="margin:8px 0 16px;">Who is each dish for? ${date===today()?'':'For tomorrow\'s '+esc(slot)+'.'}</p>
+      <p class="muted" style="margin:8px 0 16px;">Who is each dish for?</p>
       ${note ? `<div class="tiny" style="margin:-8px 0 16px;color:var(--text3);">${esc(note)}</div>` : ''}
       ${dishes.map((d,di)=>`
         <div style="margin-bottom:18px;">
@@ -1474,7 +1499,14 @@
           <div id="am-pt-${di}" style="margin-top:8px;"></div>
         </div>`).join('')}
       <div class="field">
-        <label>When</label>
+        <label>Which day</label>
+        <div class="chips" id="am-date">
+          ${[yesterday(), today(), tomorrow()].map(d=>
+            `<button class="chip ${d===date?'on':''}" onclick="pickOne(this)" data-v="${d}">${dayLabel(d)}</button>`).join('')}
+        </div>
+      </div>
+      <div class="field">
+        <label>Which meal</label>
         <div class="chips" id="am-slot">
           ${['breakfast','lunch','snack','dinner'].map(s=>
             `<button class="chip ${s===slot?'on':''}" onclick="pickOne(this)" data-v="${s}">${cap(s)}</button>`).join('')}
@@ -1572,9 +1604,9 @@
 
   async function commitAddToMenu(dishNames){
     const slot = picked('am-slot') || activeSlot();
-    // The slot picked here decides the day, not the slot that was active when the
-    // sheet opened — choosing "breakfast" at 10pm means tomorrow morning.
-    const date = slotDate(slot);
+    // The day is now its own chip rather than being inferred from the slot. `slotDate`
+    // is only the fallback for a sheet rendered before the chip existed.
+    const date = picked('am-date') || slotDate(slot);
     const items = [];
     dishNames.forEach((dish,di)=>{
       const el = document.getElementById('am-'+di);
@@ -1601,6 +1633,20 @@
       menuBoard = snapshot;
       renderMenuBoard();
       toast(/unknown action/i.test(String((r||{}).error||'')) ? 'Backend needs redeploying' : "Couldn't add that");
+      return;
+    }
+    // A dish added to a slot that has already ended is not a plan, it's a record of
+    // something eaten. Waiting for the next 30-second sweep would show it as "will log
+    // itself" for up to half a minute, which is a lie about a meal already on the table.
+    if (slotIsPast(date, slot)){
+      toast('Logging it now…');
+      const sw = await sheetPost({ action:'sweepMenu' });
+      await syncAll(true);
+      // `busy` means another phone holds the sweep lock. The rows are safely on the
+      // sheet and the next poll will log them, so say that rather than claiming a
+      // log that hasn't happened.
+      toast(sw && sw.busy ? 'Added — it will log itself in a moment'
+        : (dishNames.length>1 ? `${dishNames.length} dishes logged` : 'Logged'));
       return;
     }
     toast(dishNames.length>1 ? `${dishNames.length} dishes on the menu` : 'On the menu');
@@ -1931,11 +1977,123 @@
   function slotDate(slot){
     return istHour() < slotEndHour(slot) ? today() : tomorrow();
   }
-  function menuDate(){ return slotDate(activeSlot()); }
+  function yesterday(){
+    const d = new Date(Date.now() - 86400000);
+    return new Intl.DateTimeFormat('en-CA',{year:'numeric',month:'2-digit',day:'2-digit',timeZone:'Asia/Kolkata'}).format(d);
+  }
 
-  function menuRowsFor(date, slot){
+  // ── The Menu's own position (v3.14) ──────────────────────────────────────
+  // The Menu used to render whatever (date, slot) Cook next was pointed at. That
+  // made three things wrong at once: switching Cook next to dinner hid what was
+  // eaten at breakfast; the 30-second poll moved the Menu on its own at 11am, 4pm
+  // and 7pm with nobody touching it; and a dish that auto-logged vanished from the
+  // card, which read as data loss rather than as "you ate it".
+  //
+  // The Menu now has a position of its own. By default that position FOLLOWS Cook
+  // next — one kitchen, one question — but a tap on a day or slot chip PINS it, and
+  // the pin holds until you tap back to the live slot or reload. Nothing else in the
+  // app may set the pin; it exists only so you can look around.
+  let menuPin = null;                       // {date, slot} or null while following
+
+  // Once today's dinner is on the table there is nothing left to decide about today,
+  // and the useful question is tomorrow's breakfast. "Dinner is done" means every
+  // dinner row for today has logged itself — not merely that the clock says late,
+  // because a 10pm dinner is still dinner.
+  function dinnerIsDone(){
+    const rows = menuBoard.filter(m => m.date === today()
+      && String(m.slot||'').toLowerCase() === 'dinner'
+      && (m.status||'open') !== 'expired');
+    return rows.length > 0 && rows.every(m => (m.status||'open') === 'logged');
+  }
+  function menuDefault(){
+    if (dinnerIsDone()) return { date: tomorrow(), slot: 'breakfast' };
+    return { date: slotDate(activeSlot()), slot: activeSlot() };
+  }
+  function menuView(){
+    const def = menuDefault();
+    // Landing back on the default is how you resume following, so clear the pin
+    // rather than leaving it stuck to a value that happens to match today.
+    if (menuPin && menuPin.date === def.date && menuPin.slot === def.slot) menuPin = null;
+    return menuPin || def;
+  }
+  function setMenuView(date, slot){
+    const def = menuDefault();
+    menuPin = (date === def.date && slot === def.slot) ? null : { date:date, slot:slot };
+    renderMenuBoard();
+  }
+  function setMenuSlot(sl){ const v = menuView(); setMenuView(v.date, sl); }
+  function setMenuDay(d){
+    const v = menuView(), days = menuDays();
+    const from = days.indexOf(v.date), to = days.indexOf(d);
+    slideFrom = (from > -1 && to > -1 && to !== from) ? (to > from ? 26 : -26) : 0;
+    setMenuView(d, v.slot);
+    slideFrom = 0;
+  }
+  // Yesterday, today, tomorrow — in order, because the swipe walks the array.
+  function menuDays(){ return [yesterday(), today(), tomorrow()]; }
+  // dir is +1 for "later" and -1 for "earlier". Clamped rather than wrapped: a swipe
+  // that jumped from tomorrow back to yesterday would look like a bug even though it
+  // is only three days. `slideFrom` tells the animation which side to enter from, so
+  // the content moves the way the thumb did.
+  let slideFrom = 0;
+  function shiftMenuDay(dir){
+    const days = menuDays(), v = menuView();
+    const i = days.indexOf(v.date);
+    if (i === -1) return false;
+    const next = i + dir;
+    if (next < 0 || next >= days.length) return false;
+    slideFrom = dir > 0 ? 26 : -26;
+    setMenuView(days[next], v.slot);
+    slideFrom = 0;
+    return true;
+  }
+
+  // ── Swiping the card between days (v3.15) ─────────────────────────────────
+  // Bound once to #t-menu itself, not to anything inside it: renderMenuBoard replaces
+  // the card's innerHTML on every poll, so a listener on a child would be discarded
+  // within thirty seconds and the swipe would silently stop working.
+  let menuSwipeBound = false;
+  function bindMenuSwipe(){
+    const box = document.getElementById('t-menu');
+    if (!box || menuSwipeBound) return;
+    menuSwipeBound = true;
+    let x0 = 0, y0 = 0, tracking = false;
+    box.addEventListener('touchstart', e => {
+      // A horizontal drag that starts on the meal chips belongs to that row, which
+      // scrolls sideways on a narrow phone. Same for anything the finger can press.
+      if (e.target.closest('.chips, button, input, a')) { tracking = false; return; }
+      if (e.touches.length !== 1) { tracking = false; return; }
+      x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; tracking = true;
+    }, { passive:true });
+    box.addEventListener('touchend', e => {
+      if (!tracking) return;
+      tracking = false;
+      const t = e.changedTouches && e.changedTouches[0];
+      if (!t) return;
+      const dx = t.clientX - x0, dy = t.clientY - y0;
+      // Both tests matter. The distance stops a tap from counting as a swipe; the
+      // ratio stops a scroll that drifted sideways from changing the day under him.
+      if (Math.abs(dx) < 45 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+      shiftMenuDay(dx < 0 ? 1 : -1);
+    }, { passive:true });
+  }
+  function menuDate(){ return menuView().date; }
+  function menuSlot(){ return menuView().slot; }
+  function dayLabel(d){
+    return d === today() ? 'Today' : d === tomorrow() ? 'Tomorrow'
+         : d === yesterday() ? 'Yesterday' : d;
+  }
+  // Has this (date, slot) already come and gone?
+  function slotIsPast(date, slot){
+    return date < today() || (date === today() && istHour() >= slotEndHour(slot));
+  }
+
+  // `withEaten` is off by default on purpose. Everything that ACTS on the menu —
+  // the cook's order, "Log now", the plan writer, clearMenuRowsFor — must only ever
+  // see open rows. Only the display asks for the eaten ones.
+  function menuRowsFor(date, slot, withEaten){
     return menuBoard.filter(m => m.date === date && String(m.slot||'').toLowerCase() === slot
-                                 && (m.status||'open') === 'open');
+      && (withEaten ? (m.status||'open') !== 'expired' : (m.status||'open') === 'open'));
   }
   // Grouped by dish, because a dish cooked for three people is one pot, one line on
   // the cook's order, and one thing to tap — not three.
@@ -1944,8 +2102,8 @@
   let menuPortionDish = null;
   function openMenuPortion(dish){
     menuPortionDish = dish;
-    const date = menuDate(), slot = activeSlot();
-    const g = menuGrouped(date, slot).find(x=>x.dish.toLowerCase()===String(dish).toLowerCase());
+    const v = menuView(), date = v.date, slot = v.slot;
+    const g = menuGrouped(date, slot, true).find(x=>x.dish.toLowerCase()===String(dish).toLowerCase());
     if (!g){ toast("That dish isn't on the menu"); return; }
     const base = suggestedPortion(dish);
     const e = dishMacros[String(dish).trim().toLowerCase()];
@@ -1975,9 +2133,12 @@
     const dish = menuPortionDish;
     const st = addPortions[0];
     if (!dish || !st) { closeSheet(); return; }
-    const date = menuDate(), slot = activeSlot();
-    const g = menuGrouped(date, slot).find(x=>x.dish.toLowerCase()===String(dish).toLowerCase());
+    const v = menuView(), date = v.date, slot = v.slot;
+    const g = menuGrouped(date, slot, true).find(x=>x.dish.toLowerCase()===String(dish).toLowerCase());
     if (!g){ closeSheet(); return; }
+    // Editing an amount on a dish that has already logged has to rewrite the MealLog
+    // row as well, or the Menu would say "2 rotis" while the day bar still counts one.
+    const eaten = g.someEaten;
     closeSheet();
 
     // One write per distinct amount: a shared portion is a single call, per-person
@@ -1998,7 +2159,7 @@
     menuBoard = menuBoard.map(m=>{
       if (m.date !== date || m.slot !== slot) return m;
       if (String(m.dish||'').toLowerCase() !== String(dish).toLowerCase()) return m;
-      if (String(m.status||'open') !== 'open') return m;
+      if (String(m.status||'open') === 'expired') return m;
       const w = writes.find(x=>!x.person || x.person === m.person);
       return w ? Object.assign({}, m, { portion:w.text, portionFactor:w.f }) : m;
     });
@@ -2006,7 +2167,7 @@
 
     for (const w of writes){
       const r = await sheetPost({ action:'updateMenuPortion', date, slot, dish,
-        person:w.person, portion:w.text, portionFactor:w.f });
+        person:w.person, portion:w.text, portionFactor:w.f, includeLogged:eaten });
       if (!r || r.error || r.success === false){
         menuBoard = snapshot;
         renderMenuBoard(); renderToday();
@@ -2019,9 +2180,9 @@
     syncAll(true);
   }
 
-  function menuGrouped(date, slot){
+  function menuGrouped(date, slot, withEaten){
     const out = [], idx = {};
-    menuRowsFor(date, slot).forEach(m => {
+    menuRowsFor(date, slot, withEaten).forEach(m => {
       const k = m.dish.trim().toLowerCase();
       if (idx[k] == null){ idx[k] = out.length; out.push({ dish:m.dish.trim(), for:[], rows:[], portion:'' }); }
       const g = out[idx[k]];
@@ -2029,19 +2190,26 @@
       if (!g.portion && m.portion) g.portion = m.portion;
       g.rows.push(m);
     });
+    // A dish is "eaten" only when every one of its rows has logged. Half-logged is a
+    // real state (one person's row swept, another added after) and it shows as open.
+    out.forEach(g => {
+      g.eaten = g.rows.every(r => (r.status||'open') === 'logged');
+      g.someEaten = g.rows.some(r => (r.status||'open') === 'logged');
+    });
     return out;
   }
   function onMenu(dish, person, date, slot){
     const k = String(dish).trim().toLowerCase();
-    return menuRowsFor(date || menuDate(), slot || activeSlot())
+    return menuRowsFor(date || menuDate(), slot || menuSlot())
       .some(m => m.dish.trim().toLowerCase() === k && m.person === person);
   }
 
   function renderMenuBoard(){
     const box = document.getElementById('t-menu');
     if (!box) return;
-    const date = menuDate(), slot = activeSlot();
-    const groups = menuGrouped(date, slot);
+    bindMenuSwipe();
+    const v = menuView(), date = v.date, slot = v.slot;
+    const groups = menuGrouped(date, slot, true);
 
     if (menuBackendMissing){
       box.innerHTML = `<div class="eyebrow" style="color:var(--mirch);">Menu unavailable</div>
@@ -2049,18 +2217,25 @@
         finalised dishes can't be saved. In Apps Script: Deploy → Manage deployments → Version: New version.</div>`;
       return;
     }
-    if (!groups.length){ box.innerHTML = ''; return; }   // :empty hides the card entirely
-
     const everyone = Object.keys(members);
+    const def = menuDefault();
+    const past = slotIsPast(date, slot);
+    const openGroups = groups.filter(g => !g.eaten);
+
     const rows = groups.map(g => {
       const mine = g.for.includes(activePerson);
       const plan = g.rows.some(r => r.source === 'plan');
-      return `<div style="padding:10px 0;border-bottom:0.5px solid var(--border);">
+      // An eaten dish stays on the menu rather than disappearing the moment the sweep
+      // runs — vanishing is what made a normal auto-log read as the menu being wiped.
+      // It goes quiet instead of going away: dimmed, ticked, and still editable.
+      const eaten = g.eaten;
+      return `<div style="padding:10px 0;border-bottom:0.5px solid var(--border);${eaten?'opacity:0.62;':''}">
         <div class="row" style="align-items:flex-start;">
           <div style="flex:1;min-width:0;">
-            <span class="display" style="font-weight:500;font-size:16px;">${esc(g.dish)}</span>
+            <span class="display" style="font-weight:500;font-size:16px;">${
+              eaten ? `<span style="color:var(--dhania);">✓</span> ` : ''}${esc(g.dish)}</span>
             <div class="tiny" style="margin-top:3px;color:var(--text2);">
-              ${esc(whoLabel(g.for))}${plan?' · from your plan':''}
+              ${eaten ? 'Eaten · ' : ''}${esc(whoLabel(g.for))}${plan?' · from your plan':''}
               · <button class="btn-ghost" style="padding:0;min-height:0;font-size:12px;
                   color:${g.portion?'var(--haldi)':'var(--text3)'};text-decoration:underline;"
                   onclick="openMenuPortion(${jsAttr(g.dish)})">${
@@ -2068,15 +2243,16 @@
             </div>
           </div>
           <span style="display:flex;align-items:center;gap:8px;flex:0 0 auto;">
-            ${mine
+            ${eaten ? '' : (mine
               ? `<button class="btn-ghost" style="padding:3px 8px;min-height:0;font-size:12px;color:var(--text3);
                    border:0.5px solid var(--border);border-radius:99px;"
                    onclick="leaveMenuDish(${jsAttr(g.dish)})">Not me</button>`
               : `<button class="btn-ghost" style="padding:3px 9px;min-height:0;font-size:12px;color:var(--dhania);
                    border:0.5px solid var(--dhania);border-radius:99px;"
-                   onclick="joinMenuDish(${jsAttr(g.dish)})">+1</button>`}
+                   onclick="joinMenuDish(${jsAttr(g.dish)})">+1</button>`)}
             <button class="btn-ghost" style="padding:2px 5px;min-height:0;font-size:14px;color:var(--text3);"
-              onclick="dropMenuDish(${jsAttr(g.dish)})" aria-label="Remove ${esc(g.dish)} from the menu">&times;</button>
+              onclick="dropMenuDish(${jsAttr(g.dish)})"
+              aria-label="Remove ${esc(g.dish)}${eaten?' — this also deletes the logged meal':' from the menu'}">&times;</button>
           </span>
         </div></div>`;
     }).join('');
@@ -2087,20 +2263,105 @@
     groups.forEach(g => g.for.forEach(n => covered[n] = 1));
     const uncovered = everyone.filter(n => !covered[n]);
 
+    // The day used to be three chips. It is a swipe now, so the row is three dots —
+    // a position indicator rather than a control, which buys back a whole row of
+    // vertical space on a 375px phone. They stay tappable, because a swipe with no
+    // fallback is invisible to anyone who doesn't happen to try it, and unusable with
+    // a keyboard. The day's NAME is already in the eyebrow, so the dots don't repeat it.
+    const dayDot = d => `<button class="day-dot ${d===date?'on':''} ${
+        d===def.date && def.slot===slot ? 'live' : ''}"
+        onclick="setMenuDay(${jsAttr(d)})" aria-label="${dayLabel(d)}"
+        aria-current="${d===date}"></button>`;
+    // On the meal chips a dot still marks where "now" is, but only once you have
+    // wandered off it — on the selected chip the highlight already says so.
+    const liveDot = (d, sl) => (d===def.date && sl===def.slot && !(d===date && sl===slot))
+      ? ` <span style="color:var(--haldi);">•</span>` : '';
+    const slotChip = sl => `<button class="chip ${sl===slot?'on':''}" style="padding:5px 11px;font-size:12px;"
+        onclick="setMenuSlot(${jsAttr(sl)})">${cap(sl)}${liveDot(date, sl)}</button>`;
+
+    const footer = openGroups.length
+      ? `<div class="tiny" style="margin-top:9px;color:var(--text3);">
+           ${past ? 'This slot is over, so these log themselves on the next refresh.'
+                  : `Logs itself after ${cap(slot)} unless you change it.`}</div>
+         <div class="btn-row" style="margin-top:11px;">
+           <button class="btn-primary" onclick="tellCookFromMenu()">Tell cook</button>
+           <button style="flex:0 0 auto;padding:11px 16px;" onclick="logMenuBoard()">Log now</button>
+         </div>`
+      : '';
+
     box.innerHTML = `
       <div class="row">
-        <span class="eyebrow" style="color:var(--dhania);">Menu · ${cap(slot)}${date===today()?'':' tomorrow'}</span>
-        <span class="tiny mono" style="color:var(--text3);">${groups.length} dish${groups.length>1?'es':''}</span>
+        <span class="eyebrow" style="color:var(--dhania);">Menu · ${dayLabel(date)} ${cap(slot)}</span>
+        <button class="btn-ghost" style="padding:4px 10px;min-height:0;font-size:12px;
+          border:0.5px solid var(--border);border-radius:99px;"
+          onclick="openMenuAdd()">+ Add</button>
       </div>
-      <div style="margin-top:4px;">${rows}</div>
-      ${uncovered.length ? `<div class="tiny" style="margin-top:9px;color:var(--text3);">
-        Nothing set for ${esc(uncovered.join(', '))} — so nothing gets logged for ${uncovered.length>1?'them':'them'}.</div>` : ''}
-      <div class="tiny" style="margin-top:9px;color:var(--text3);">
-        Logs itself after ${cap(slot)} unless you change it.</div>
-      <div class="btn-row" style="margin-top:11px;">
-        <button class="btn-primary" onclick="tellCookFromMenu()">Tell cook</button>
-        <button style="flex:0 0 auto;padding:11px 16px;" onclick="logMenuBoard()">Log now</button>
+      <div class="row" style="margin-top:8px;justify-content:flex-start;gap:10px;">
+        <div class="day-dots">${menuDays().map(dayDot).join('')}</div>
+        <span class="tiny" style="color:var(--text3);">${
+          date === yesterday() ? 'Swipe left for today'
+          : date === tomorrow() ? 'Swipe right for today'
+          : 'Swipe for other days'}</span>
+      </div>
+      <div class="chips" style="margin-top:8px;gap:6px;">
+        ${['breakfast','lunch','snack','dinner'].map(slotChip).join('')}
+      </div>
+      ${(!menuPin && date === tomorrow() && slot === 'breakfast' && activeSlot() !== 'breakfast')
+        ? `<div class="tiny" style="margin-top:6px;color:var(--text3);">
+             Dinner's logged, so this is tomorrow's breakfast.
+             <button class="btn-ghost" style="padding:0 0 0 4px;min-height:0;font-size:12px;
+               text-decoration:underline;color:var(--haldi);"
+               onclick="setSlot('breakfast')">Get ideas for it</button></div>` : ''}
+      ${menuPin ? `<div class="tiny" style="margin-top:6px;color:var(--text3);">
+        Looking at ${dayLabel(date).toLowerCase()}'s ${esc(slot)}.
+        <button class="btn-ghost" style="padding:0 0 0 4px;min-height:0;font-size:12px;
+          text-decoration:underline;color:var(--haldi);"
+          onclick="setMenuView(${jsAttr(def.date)},${jsAttr(def.slot)})">Back to ${dayLabel(def.date).toLowerCase()}'s ${esc(def.slot)}</button></div>` : ''}
+      <div class="${slideFrom ? 'menu-slide' : ''}" style="--slide-from:${slideFrom}px;">
+      ${groups.length
+        ? `<div style="margin-top:8px;">${rows}</div>
+           ${uncovered.length && !past ? `<div class="tiny" style="margin-top:9px;color:var(--text3);">
+             Nothing set for ${esc(uncovered.join(', '))} — so nothing gets logged for them.</div>` : ''}
+           ${footer}`
+        : `<div class="muted" style="margin-top:12px;font-size:14px;">
+             ${past ? `Nothing was logged for ${dayLabel(date).toLowerCase()}'s ${esc(slot)}.`
+                    : `Nothing on the menu for ${dayLabel(date).toLowerCase()}'s ${esc(slot)} yet.`}</div>`}
       </div>`;
+  }
+
+  // ── Adding straight to the slot you're looking at (v3.14) ────────────────
+  // Cook next can only ever add to the slot IT is on, which stops being enough the
+  // moment the Menu can look at yesterday's breakfast. This is the same add sheet,
+  // reached from the Menu, defaulting to the day and slot on screen.
+  function openMenuAdd(){
+    const v = menuView();
+    openSheet(`
+      <h2>Add a dish</h2>
+      <p class="muted" style="margin:8px 0 14px;">To ${dayLabel(v.date).toLowerCase()}'s ${esc(v.slot)}.</p>
+      <div class="field">
+        <input id="ma-box" placeholder="Dish name" autocomplete="off"
+          oninput="renderSuggest('ma-sug', this.value, 'menuAddPick')">
+        <div id="ma-sug"></div>
+      </div>
+      <button class="btn-primary" style="width:100%;margin-top:12px;" onclick="menuAddPush()">Next</button>
+      <button class="btn-ghost" style="width:100%;margin-top:8px;font-size:13px;" onclick="closeSheet()">Cancel</button>`);
+    const el = document.getElementById('ma-box'); if (el) el.focus();
+  }
+  function menuAddPick(name){
+    const el = document.getElementById('ma-box');
+    if (el) el.value = name;
+    const s = document.getElementById('ma-sug'); if (s) s.innerHTML = '';
+    menuAddPush();
+  }
+  function menuAddPush(){
+    const el = document.getElementById('ma-box');
+    const name = ((el && el.value) || '').trim();
+    if (!name){ toast('Type a dish first'); return; }
+    const v = menuView();
+    const known = !!dishMacros[name.toLowerCase()];
+    addDishesToMenu([name],
+      known ? '' : "It's not in the dish list yet — macros will fill in once it's logged.",
+      v.date, v.slot);
   }
 
   // ── Joining, leaving, dropping ──
@@ -2123,7 +2384,7 @@
   }
 
   async function joinMenuDish(dish){
-    const date = menuDate(), slot = activeSlot(), person = activePerson;
+    const v = menuView(), date = v.date, slot = v.slot, person = activePerson;
     if (!person) return;
     await menuWrite(
       { action:'addMenuItems', addedBy:person,
@@ -2133,7 +2394,7 @@
   }
 
   async function leaveMenuDish(dish){
-    const date = menuDate(), slot = activeSlot(), person = activePerson;
+    const v = menuView(), date = v.date, slot = v.slot, person = activePerson;
     const k = dish.trim().toLowerCase();
     await menuWrite(
       { action:'removeMenuItem', dish:dish, date:date, slot:slot, person:person },
@@ -2143,48 +2404,62 @@
 
   // Removing the dish for everyone — the cook isn't making it at all.
   async function dropMenuDish(dish){
-    const date = menuDate(), slot = activeSlot();
+    const v = menuView(), date = v.date, slot = v.slot;
     const k = dish.trim().toLowerCase();
-    const rows = menuRowsFor(date, slot).filter(m => m.dish.trim().toLowerCase() === k);
+    const rows = menuRowsFor(date, slot, true).filter(m => m.dish.trim().toLowerCase() === k);
+    if (!rows.length) return;
+    // Removing a dish that already logged deletes the meal too. His words: "if
+    // something is removed then it's removed". Confirmed once, because unlike an open
+    // row this destroys a record rather than a plan.
+    const eaten = rows.filter(r => (r.status||'open') === 'logged');
+    if (eaten.length && !confirm(`${dish} is already logged. Remove it from the menu and delete it from the log?`)) return;
+
     const snapshot = menuBoard.slice();
+    const snapMeals = mealLog.slice();
     menuBoard = menuBoard.filter(m => rows.indexOf(m) === -1);
-    renderMenuBoard();
+    const goneIds = eaten.map(r => String(r.logId||'')).filter(Boolean);
+    if (goneIds.length) mealLog = mealLog.filter(m => goneIds.indexOf(String(m.logId||'')) === -1);
+    renderMenuBoard(); renderToday();
     for (const r of rows){
       const res = await sheetPost({ action:'removeMenuItem', id:r.id, dish:r.dish,
-                                    date:r.date, slot:r.slot, person:r.person });
+                                    date:r.date, slot:r.slot, person:r.person,
+                                    force:(r.status||'open') === 'logged' });
       if (!res || res.error || res.success === false){
-        menuBoard = snapshot; renderMenuBoard(); toast("Couldn't remove that"); return;
+        menuBoard = snapshot; mealLog = snapMeals;
+        renderMenuBoard(); renderToday(); toast("Couldn't remove that"); return;
       }
     }
-    toast(`${dish} off the menu`);
+    toast(eaten.length ? `${dish} removed` : `${dish} off the menu`);
     syncAll(true);
   }
 
-  // Once a dish is logged, its open Menu rows are spent. Fire-and-forget: if one of
-  // these writes fails the row stays open and the sweep logs it after the slot ends,
-  // which reconcilePending and the dedupe in the log view already tolerate — a lost
-  // menu row is a much cheaper failure than a blocked log.
-  function clearMenuRowsFor(dish, who, slot){
+  // Once a dish is logged, its open Menu row has been answered. It used to be DELETED
+  // here, which is the single reason a dish you logged by hand disappeared off the menu
+  // while one the sweep logged looked the same to the sheet but behaved differently.
+  // Now it is MARKED, exactly as the sweep marks it, and the card keeps showing it as
+  // eaten. Only the local state is touched — the sheet write rides along with the
+  // logMeal call itself (`closeMenuRow`), so there is no window in which the meal
+  // exists and the row is still open for the sweep to log a second time.
+  //
+  // Only today's rows. The old version also matched tomorrow's, so logging poha this
+  // morning silently removed the poha someone had planned for tomorrow.
+  function markMenuRowsLogged(dish, who, slot){
     const k = String(dish).trim().toLowerCase();
-    const dates = [today(), tomorrow()];
-    const gone = [];
-    menuBoard.forEach(m => {
-      if ((m.status||'open') !== 'open') return;
-      if (m.dish.trim().toLowerCase() !== k) return;
-      if (String(m.slot||'').toLowerCase() !== slot) return;
-      if (dates.indexOf(m.date) === -1) return;
-      if (who.indexOf(m.person) === -1) return;
-      gone.push(m);
+    let hit = false;
+    menuBoard = menuBoard.map(m => {
+      if ((m.status||'open') !== 'open') return m;
+      if (m.dish.trim().toLowerCase() !== k) return m;
+      if (String(m.slot||'').toLowerCase() !== slot) return m;
+      if (m.date !== today()) return m;
+      if (who.indexOf(m.person) === -1) return m;
+      hit = true;
+      return Object.assign({}, m, { status:'logged' });
     });
-    if (!gone.length) return;
-    menuBoard = menuBoard.filter(m => gone.indexOf(m) === -1);
-    renderMenuBoard();
-    gone.forEach(m => sheetPost({ action:'removeMenuItem', id:m.id, dish:m.dish,
-                                  date:m.date, slot:m.slot, person:m.person }));
+    if (hit) renderMenuBoard();
   }
 
   function menuAsDishes(){
-    return menuGrouped(menuDate(), activeSlot()).map(g => ({ dish:g.dish, for:g.for, portion:g.portion }));
+    return menuGrouped(menuDate(), menuSlot()).map(g => ({ dish:g.dish, for:g.for, portion:g.portion }));
   }
   function tellCookFromMenu(){
     const d = menuAsDishes();
@@ -2194,9 +2469,9 @@
   // "Log now" is the manual shortcut for a meal eaten before its slot ends — the
   // sweep would get it eventually, this just doesn't make you wait.
   function logMenuBoard(){
-    const groups = menuGrouped(menuDate(), activeSlot());
-    if (!groups.length){ toast('Nothing on the menu yet'); return; }
-    logDishesFor(groups.map(g => ({ dish:g.dish, for:g.for })), activeSlot());
+    const groups = menuGrouped(menuDate(), menuSlot());
+    if (!groups.length){ toast('Nothing left to log for this meal'); return; }
+    logDishesFor(groups.map(g => ({ dish:g.dish, for:g.for })), menuSlot());
   }
 
   // ══════════ FIXED MENU (the plan) ══════════
@@ -3314,10 +3589,16 @@
     closeSheet();
     const snapshot = mealLog.slice();
     mealLog = mealLog.filter(x => x.logId !== logId);
+    // deleteMealLog reopens any Menu row that produced this meal, so the card has to
+    // show it as open again — otherwise it would sit there ticked with nothing behind it.
+    const menuSnap = menuBoard.slice();
+    menuBoard = menuBoard.map(m => String(m.logId||'') === String(logId)
+      ? Object.assign({}, m, { status:'open', logId:'' }) : m);
     renderToday();
     const r = await sheetPost({ action:'deleteMealLog', logId:logId });
     if (!r || r.error || r.success === false){
       mealLog = snapshot;
+      menuBoard = menuSnap;
       renderToday();
       toast(/unknown action/i.test(String((r||{}).error||'')) ? 'Backend needs redeploying' : "Couldn't remove that");
       return;
@@ -3355,7 +3636,7 @@
     // that row is spent. This lives here rather than in the menu path alone because
     // a quick-log chip is just as much an answer — and leaving the row open would
     // have the sweep log the same meal a second time when the slot ended.
-    clearMenuRowsFor(dish, who, type);
+    markMenuRowsLogged(dish, who, type);
     // Drop the just-eaten dish from the on-screen menu locally — free. Only
     // regenerate (a paid call) if the caller explicitly wants it, which nothing
     // currently does, so routine logging never triggers a menu API call.
@@ -3377,7 +3658,8 @@
       return (async () => {
         for (const person of who)
           await sheetPost({ action:'logMeal', mealName:dish, mealType:type, loggedBy:person,
-                            source:opts.source || 'manual' });
+                            source:opts.source || 'manual',
+                            closeMenuRow:true, menuDate:today() });
         syncAll(true);
       })();
     });
@@ -4419,16 +4701,16 @@
       (x.scope === 'shared' || (sk !== 'shared' && x.scope === sk)));
   }
 
-  // Which day a slot belongs to. A dinner viewed at 11pm is tomorrow's, and
-  // storing it under today would make it vanish at midnight for everyone else.
-  function slotDate(slot){
-    return slotIsToday(slot) ? today() : tomorrowStr();
-  }
-  function tomorrowStr(){
-    const d = new Date(new Date().toLocaleString('en-US', { timeZone:'Asia/Kolkata' }));
-    d.setDate(d.getDate() + 1);
-    return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
-  }
+  // v3.14. A SECOND `function slotDate` lived here, and because function declarations
+  // hoist, this later one silently replaced the sweep-aligned version defined with the
+  // rest of the menu code — the one whose own comment warns, in as many words, against
+  // exactly this. The result shipped: `slotIsToday` treats breakfast as over from 8am,
+  // so between 8 and 11 the app filed a dish under TOMORROW while the sweep, which uses
+  // 11, logged it under TODAY. Open the app at 9am and the Menu showed tomorrow's empty
+  // breakfast while the morning's real dishes sat one day away, invisible. That is the
+  // "menu was gone in the morning" report. The duplicate is deleted; there is one
+  // slotDate now, next to `menuDate`, and `tomorrowStr` went with it — `tomorrow()`
+  // already did the same job with the same Intl call every other date uses.
 
   // Shared rows in, the shape renderMenu already speaks out. Paged 5 at a time so
   // a list that has grown all evening stays readable.
@@ -4865,7 +5147,7 @@
           `<button class="chip ${sl===activeSlot()?'on':''}" style="padding:5px 11px;font-size:12px;"
              onclick="setSlot(${jsAttr(sl)})">${cap(sl)}</button>`).join('')}
       </div>
-      ${slotOverride ? `<div class="tiny" style="margin-top:6px;">Planning ${slotIsToday(slotOverride)?'today\'s':'the next'} ${esc(slotOverride)} rather than ${esc(mealSlot())}.</div>` : ''}
+      ${slotOverride ? `<div class="tiny" style="margin-top:6px;">Planning ${slotDate(slotOverride)===today()?'today\'s':'tomorrow\'s'} ${esc(slotOverride)} rather than ${esc(mealSlot())}.</div>` : ''}
       ${prepStrip()}
       ${(function(){
         // v3.12. Say whose menu this is and who built it. When three people share
