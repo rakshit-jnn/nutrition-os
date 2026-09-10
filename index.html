@@ -539,7 +539,7 @@
   const VISION_API = '/api/vision';
   const MODEL      = 'claude-sonnet-4-5';
   const SHEET_URL  = 'https://script.google.com/macros/s/AKfycbxXDdY5y_QUVIML1Zb4nwTnuryI_Uqhe-EGwc_iDT_s5OZ9wJNcfWvILo4rCC5bN6XT/exec';
-  const VERSION    = 'v4.3';
+  const VERSION    = 'v4.6';
 
   // ══════════ HOUSEHOLD (v4.0) ══════════
   // Every request now carries which household it belongs to. Stored on the device
@@ -766,6 +766,10 @@
   // static lab data has no business on a 30-second poll — while measures/recipes
   // ride the sync batch because they are small and do change.
   let ingredients = [], ingIndex = {}, measures = [], recipes = [];
+  // v4.7. The dish universe. Every portion number on screen comes from here:
+  // how heavy a katori of this dish is, and its macros per 100 g. Both are
+  // calculated in the library sheet, so nothing is stored or guessed locally.
+  let dishCatalog = [], catIndex = {};
   let photoCanonNote = 0;   // how many names a photo scan rewrote, for the toast
   // Which settings are genuinely shared. Everything else in `settings` is device- or
   // session-scoped (prompt dismissals, low-stock thresholds) and must NOT be synced —
@@ -832,27 +836,35 @@
         const [inv0, ml0, mac0, prefs0, wk0, lib0, skl0, wl0, mn0, pl0, hh0] = await Promise.all([
           sheetGet('getInventory'), sheetGet('getMealLog'), sheetGet('getMacros'),
           sheetGet('getPreferences'), sheetGet('getWorkoutLog'),
-          sheetGet('getDishLibrary'), sheetGet('getCookSkills'), sheetGet('getWishlist'),
+          sheetGet('getCookSkills'), sheetGet('getWishlist'),
           sheetGet('getMenu'), sheetGet('getMealPlans'), sheetGet('getHousehold')
         ]);
-        const [ms0, rc0, cn0] = await Promise.all([
-          sheetGet('getMeasures'), sheetGet('getRecipes'), sheetGet('getCookNext')]);
+        const [ms0, cn0, dc0] = await Promise.all([
+          sheetGet('getMeasures'), sheetGet('getCookNext'), sheetGet('getDishCatalog')]);
         all = { getInventory:inv0, getMealLog:ml0, getMacros:mac0, getPreferences:prefs0,
-                getWorkoutLog:wk0, getDishLibrary:lib0, getCookSkills:skl0, getWishlist:wl0,
+                getWorkoutLog:wk0, getCookSkills:skl0, getWishlist:wl0,
                 getMenu:mn0, getMealPlans:pl0, getHousehold:hh0,
-                getMeasures:ms0, getRecipes:rc0, getCookNext:cn0 };
+                getMeasures:ms0, getCookNext:cn0, getDishCatalog:dc0 };
       }
       const inv = all.getInventory, ml = all.getMealLog, mac = all.getMacros,
-            prefs = all.getPreferences, wk = all.getWorkoutLog, lib = all.getDishLibrary,
+            prefs = all.getPreferences, wk = all.getWorkoutLog,
             skl = all.getCookSkills, wl = all.getWishlist, mn = all.getMenu,
             pl = all.getMealPlans, hh = all.getHousehold,
-            ms = all.getMeasures, rc = all.getRecipes, cn = all.getCookNext;
+            ms = all.getMeasures, cn = all.getCookNext, dc = all.getDishCatalog;
       // v3.7. Library data, so it is safe to hold in memory and re-render from.
       // A backend that predates these tabs returns undefined, which must leave the
       // previous value alone rather than blanking it — same rule as every other
       // reader here: a failed fetch is not evidence that the data is gone.
       if (ms && ms.measures) measures = ms.measures;
-      if (rc && rc.recipes)  recipes  = rc.recipes;
+      if (dc && dc.dishes){
+        dishCatalog = dc.dishes;
+        catIndex = {};
+        dishCatalog.forEach(d=>{
+          if (d.dishId) catIndex[d.dishId] = d;
+          if (d.canonicalName) catIndex[String(d.canonicalName).trim().toLowerCase()] = d;
+          (d.aliases||[]).forEach(a=>{ catIndex[String(a).trim().toLowerCase()] = d; });
+        });
+      }
       // v3.12. The shared menu. Re-render if it changed under us — a flatmate
       // adding a dish should appear without anyone reloading, which is the whole
       // point of the list being shared rather than per-device.
@@ -879,7 +891,7 @@
         // as the previous day at IST midnight — which silently empties the whole board.
         menuBoard = mn.menu.map(m => Object.assign({}, m, {
           date: menuDay(m.date), slot: String(m.slot||'').trim().toLowerCase(),
-          portionFactor: m.portionFactor == null ? 1 : +m.portionFactor }));
+          qty: m.qty == null ? null : +m.qty, measure: m.measure || '' }));
         menuBackendMissing = false;
       } else if (mn && /unknown action/i.test(String(mn.error||''))){
         menuBackendMissing = true;
@@ -901,17 +913,28 @@
         wishlistBackendMissing = true;      // say so instead of failing silently
       }
 
-      // Two sources, one in-memory shape. Nutrition comes from the shared library
-      // (identical for every household); what the cook can make and how well comes
-      // from this household's own sheet. Everything downstream still reads a single
-      // dishMacros{} object, so the split changed where data lives, not how it's used.
-      if (lib && lib.dishes)
-        lib.dishes.forEach(x=>{
-          const k = String(x.dish).trim().toLowerCase();
-          const cur = dishMacros[k] || {};
-          dishMacros[k] = Object.assign(cur, {
-            kcal:+x.kcal||0, p:+x.protein||0, c:+x.carbs||0, f:+x.fat||0,
-            fib:(x.fiber==null?null:+x.fiber), source:x.source||'estimated',
+      // v4.8. Two sources, one in-memory shape. Nutrition comes from the shared
+      // library and is COMPUTED there, not stored; what the cook can make and how
+      // well comes from this household's own sheet. Everything downstream reads a
+      // single dishInfo{} object, so the split changed where data lives, not how
+      // it is used.
+      //
+      // The per-serving figures below are for display only — one katori, or one
+      // piece. Anything that logs a meal must go through macrosFor(), which knows
+      // the actual amount. A null macro means "not costed", never zero.
+      if (dc && dc.dishes)
+        dc.dishes.forEach(x=>{
+          const k = String(x.canonicalName||'').trim().toLowerCase();
+          if (!k) return;
+          const ps = x.perServing || {};
+          const cur = dishInfo[k] || {};
+          dishInfo[k] = Object.assign(cur, {
+            dishId:x.dishId,
+            kcal:ps.kcal==null?null:+ps.kcal, p:ps.p==null?null:+ps.p,
+            c:ps.c==null?null:+ps.c, f:ps.f==null?null:+ps.f,
+            fib:ps.fib==null?null:+ps.fib,
+            source:x.inputConfidence||'estimated',
+            servingLabel:x.servingLabel||'',
             common:(x.common==null?null:!!x.common),
             prepNote:x.prepNote||'', prepHours:+x.prepHours||0
           });
@@ -920,8 +943,8 @@
       if (skl && skl.skills)
         skl.skills.forEach(x=>{
           const k = String(x.dish).trim().toLowerCase();
-          const cur = dishMacros[k] || { kcal:0,p:0,c:0,f:0,fib:null,source:'estimated' };
-          dishMacros[k] = Object.assign(cur, {
+          const cur = dishInfo[k] || { kcal:null,p:null,c:null,f:null,fib:null,source:'estimated' };
+          dishInfo[k] = Object.assign(cur, {
             rating:x.cookRating||'', ratingCount:+x.ratingCount||0, knows:x.cookKnows||''
           });
         });
@@ -934,7 +957,7 @@
                                      by:m.loggedBy, type:m.mealType, notes:m.notes,
                                      logId:m.logId||'', source:m.source||'manual',
                                      portion:m.portion||'',
-                                     portionFactor:m.portionFactor==null?1:+m.portionFactor }));
+                                     qty:m.qty==null?null:+m.qty, measure:m.measure||'' }));
 
       if (mac && mac.macros && mac.macros.length){
         const live = mac.macros.map(r=>r.person);
@@ -1211,65 +1234,94 @@
   // Per-serving macros keyed by dish name, hydrated from the shared DishMacros
   // sheet on sync — no longer cached in localStorage. Each entry also carries a
   // `source` ('estimated' | 'confirmed') so the UI can show which are guesses.
-  let dishMacros = {};
+  // v4.8. Was dishMacros, fed by the deleted DishLibrary/DishMacros tabs. Now fed by
+  // the library catalog (nutrition, computed) and CookSkills (ratings, household).
+  // Renamed because the old name promised stored macros, and there are none left.
+  let dishInfo = {};
 
-  // ══════════ PORTIONS ══════════
-  // A portion is two things at once: the text the cook is told ("2 katori"), and a
-  // multiplier on the dish's stored macros. The multiplier is derived by comparing the
-  // number in the edited portion against the number in the SUGGESTED one, which is the
-  // serving dishMacros was costed for. Deliberately conservative: if either side can't
-  // be read, or the units disagree, the factor stays 1 and the UI says the macros are
-  // unscaled — quietly guessing a multiplier would corrupt the day's totals, which is
-  // the one number in this app that has to be trustworthy.
-  function portionQty(str){
-    const t = String(str||'').trim().toLowerCase();
-    if (!t) return null;
-    // Leading quantity: "2", "1.5", "1/2", "one and a half" is not attempted.
-    // `rest` must be whatever follows the quantity TOKEN, not whatever follows the
-    // digits — otherwise "a plate" leaves the unit as "a" and refuses to scale
-    // against "2 plate", which is the most ordinary edit there is.
-    let n = null, rest = t;
-    const frac  = t.match(/^(\d+)\s*\/\s*(\d+)/);
-    const num   = t.match(/^(\d+(?:\.\d+)?)/);
-    const word  = t.match(/^(a|an|one|half|two|three|four)\b/);
-    const WORDS = { a:1, an:1, one:1, half:0.5, two:2, three:3, four:4 };
-    if (frac){ n = (+frac[1]) / (+frac[2]); rest = t.slice(frac[0].length); }
-    else if (num){ n = +num[1]; rest = t.slice(num[0].length); }
-    else if (word){ n = WORDS[word[1]]; rest = t.slice(word[0].length); }
-    if (n == null || !isFinite(n) || n <= 0) return null;
-    // The unit is the first word after the quantity, normalised loosely so "katori"
-    // and "katoris" compare equal. Comparing across different units is refused.
-    const unit = rest.replace(/^[^a-z]*/, '').replace(/s\b/g, '').trim().split(/\s+/)[0] || '';
-    return { n, unit };
+  // ══════════ PORTIONS (v4.8) ══════════
+  // A portion is a number and a vessel — "2" and "Katori, standard" — never a
+  // sentence. The old free-text box tried to read an amount out of whatever was
+  // typed and gave up whenever it couldn't, which quietly under-counted every
+  // unusual portion. There is nothing left to fail to parse.
+  //
+  // These MIRROR portionToGrams/macrosForPortion in Code.gs. They exist so the
+  // readout updates as you tap rather than after a round trip. Change one, change
+  // the other, and keep test-parity.js passing — the two drifting apart is exactly
+  // the bug that comment is here to stop.
+  function dishFor(dish){
+    const k = String(dish||'').trim().toLowerCase();
+    return catIndex[k] || null;
   }
+  function measureFor(name){
+    const want = String(name||'').trim().toLowerCase();
+    for (let i=0;i<measures.length;i++)
+      if (String(measures[i].measure).trim().toLowerCase() === want) return measures[i];
+    return null;
+  }
+  // Grams for a portion, or null when no honest number exists. Null is NOT zero and
+  // must never render as 0 kcal — an uncosted dish shown as weightless is worse than
+  // showing nothing, because the day's total then looks achievable when it isn't.
+  function gramsFor(dish, qty, measureName){
+    const d = dishFor(dish);
+    if (!d) return null;
+    const n = parseFloat(qty);
+    const q = (isFinite(n) && n > 0) ? Math.min(50, n) : 1;
+    if (d.servedAs === 'piece' || String(measureName||'').toLowerCase() === 'piece')
+      return d.gramsPerPiece ? Math.round(q * d.gramsPerPiece) : null;
+    const m = measureFor(measureName || 'Katori, standard');
+    if (!m || !d.bulkDensity) return null;
+    return Math.round(q * m.volumeMl * d.bulkDensity * (d.fillFactor || 1));
+  }
+  function macrosFor(dish, qty, measureName){
+    const d = dishFor(dish); if (!d) return null;
+    const g = gramsFor(dish, qty, measureName); if (g == null) return null;
+    const p = d.per100g || {};
+    if (p.kcal == null) return null;
+    const at = v => v == null ? null : Math.round(v * g / 100 * 10) / 10;
+    return { grams:g, kcal:at(p.kcal), p:at(p.p), c:at(p.c), f:at(p.f), fib:at(p.fib) };
+  }
+  // What to pre-select: whatever this household logged for the dish most recently.
+  // People are consistent, and a remembered "2 katori" beats a generic default.
+  function defaultPortion(dish){
+    const d = dishFor(dish);
+    const base = (d && d.servedAs === 'piece')
+      ? { qty:1, measure:'Piece' } : { qty:1, measure:'Katori, standard' };
+    const k = String(dish||'').trim().toLowerCase();
+    for (let i = mealLog.length - 1; i >= 0; i--){
+      const m = mealLog[i];
+      if (String(m.dish||'').trim().toLowerCase() !== k) continue;
+      const q = parseFloat(m.qty), u = String(m.measure||'').trim();
+      if (isFinite(q) && q > 0 && u) return { qty:q, measure:u };
+    }
+    return base;
+  }
+  // A counted dish gets pieces only. Offering "katori" for roti invites a number
+  // that means nothing.
+  function measureOptions(dish){
+    const d = dishFor(dish);
+    if (d && d.servedAs === 'piece') return ['Piece'];
+    const vol = measures.filter(m=>m.type !== 'count').map(m=>m.measure);
+    return vol.length ? vol : ['Katori, standard'];
+  }
+  const QTY_STEPS = [0.5, 1, 1.5, 2, 3];
 
-  const FACTOR_MAX = 10;   // a typo like "20 katori" must not report a 12,000 kcal day
-  function portionFactor(edited, baseline){
-    const a = portionQty(edited), b = portionQty(baseline);
-    if (!a || !b) return { f:1, sure:false };
-    if (a.unit !== b.unit) return { f:1, sure:false };
-    const f = a.n / b.n;
-    if (!isFinite(f) || f <= 0) return { f:1, sure:false };
-    return { f: Math.min(FACTOR_MAX, Math.round(f * 100) / 100), sure:true };
-  }
-  function scaleMacros(e, f){
-    const k = (v)=> v == null ? null : Math.round(v * f);
-    return { kcal:k(e.kcal), p:k(e.p), c:k(e.c), f:k(e.f), fib:k(e.fib) };
-  }
-  function mealFactor(m){
-    const f = m && m.portionFactor;
-    return (typeof f === 'number' && isFinite(f) && f > 0) ? Math.min(FACTOR_MAX, f) : 1;
-  }
+  // v4.8. scaleMacros/mealFactor deleted with the multiplier they scaled by. A meal's
+  // macros are now computed from its own Qty and Measure against the library, so there
+  // is nothing to scale and nothing to guess a factor for.
+
   function estimateDay(){
     const meals = eatenToday();
     let p=0,c=0,f=0,kcal=0,fib=0,fibKnown=0,fibTotal=0;
     meals.forEach(m=>{
-      const e = dishMacros[m.dish.toLowerCase()];
-      if (!e) return;
-      // A double portion counts double. Before this the cook served two katori and
-      // the day reported one, which is worse than not tracking it at all.
-      const mf = mealFactor(m);
-      p+=e.p*mf; c+=e.c*mf; f+=e.f*mf; kcal+=e.kcal*mf;
+      // v4.8. Straight from the amount that was actually logged. A double portion
+      // counts double because the grams are double, not because a multiplier says so.
+      // A meal the library cannot cost is SKIPPED, never counted as zero — a day that
+      // silently omits a dish looks achievable when it isn't.
+      const mm = macrosFor(m.dish, m.qty || 1, m.measure || '');
+      if (!mm) return;
+      p+=mm.p||0; c+=mm.c||0; f+=mm.f||0; kcal+=mm.kcal||0;
+      const e = { fib: mm.fib };
       fibTotal++;
       // Fibre arrived later than the other macros, so older rows genuinely don't
       // have it. Counting a blank as 0 would quietly under-report all day —
@@ -1299,8 +1351,8 @@
     const t = members[person] || BLANK;
     let p=0, kcal=0;
     eatenTodayBy(person).forEach(m=>{
-      const e = dishMacros[String(m.dish||'').toLowerCase()];
-      if (e){ const mf = mealFactor(m); p += e.p*mf; kcal += e.kcal*mf; }
+      const mm = macrosFor(m.dish, m.qty || 1, m.measure || '');
+      if (mm){ p += mm.p||0; kcal += mm.kcal||0; }
     });
     return { p: Math.max(0, Math.round((t.protein||0) - p)),
              kcal: Math.max(0, Math.round((t.cal||0) - kcal)),
@@ -1420,7 +1472,7 @@
     return allMeals().filter(m => String(m.dish||'').trim().toLowerCase() === k).length;
   }
   function cookKnows(dish){
-    const e = dishMacros[String(dish||'').trim().toLowerCase()];
+    const e = dishInfo[String(dish||'').trim().toLowerCase()];
     if (e && e.knows === 'yes') return 'yes';
     if (e && e.knows === 'no')  return 'no';
     return timesCooked(dish) >= 2 ? 'yes' : 'unknown';
@@ -1435,12 +1487,12 @@
       if (!seen[k]) seen[k] = { name:raw, n:0 };
       seen[k].n++;
     });
-    Object.entries(dishMacros).forEach(([k,e])=>{
+    Object.entries(dishInfo).forEach(([k,e])=>{
       if (e.knows === 'yes' && !seen[k]) seen[k] = { name:cap(k), n:1 };
     });
     return Object.entries(seen)
-      .filter(([k,v]) => v.n >= 2 || (dishMacros[k] && dishMacros[k].knows === 'yes'))
-      .filter(([k]) => !dishMacros[k] || dishMacros[k].knows !== 'no')
+      .filter(([k,v]) => v.n >= 2 || (dishInfo[k] && dishInfo[k].knows === 'yes'))
+      .filter(([k]) => !dishInfo[k] || dishInfo[k].knows !== 'no')
       .sort((a,b)=>b[1].n - a[1].n)
       .slice(0, limit || 25)
       .map(e=>e[1].name);
@@ -1470,7 +1522,9 @@
     for (const h of PREP_HINTS) if (h.re.test(name)) return { note:h.note, hours:h.hours };
     // Then the shared library, which grows as households across the app hit
     // dishes the static table never covered.
-    const lib = dishMacros[String(name).trim().toLowerCase()];
+    // v4.8. From the library catalog. Soaking rajma is a fact about rajma, true in
+    // every kitchen, so it belongs there rather than in a household's own table.
+    const lib = dishInfo[String(name).trim().toLowerCase()];
     if (lib && lib.prepNote) return { note:lib.prepNote, hours:+lib.prepHours || 0 };
     if (m && typeof m === 'object' && m.prep && String(m.prep).trim())
       return { note:String(m.prep).trim(), hours:+m.prepHours || 0 };
@@ -1523,7 +1577,7 @@
 
   // Takes bare dish names so both the ticked recommendations and a hand-typed dish
   // land in exactly the same who/when sheet — one path, one set of bugs.
-  // Portion state for the open sheet. `base` is the suggested serving that dishMacros
+  // Portion state for the open sheet. `base` is the suggested serving that dishInfo
   // was costed for; everything is a multiple of that. `per` holds per-person overrides
   // and stays empty unless someone opens the expander — the common case is one portion
   // for the whole dish, and asking for four inputs would be worse than not asking.
@@ -1540,9 +1594,10 @@
     // other half of the time.
     const slot = wantSlot || activeSlot();
     const date = wantDate || slotDate(slot);
+    // v4.7. Pre-filled with whatever this household logged for the dish last time.
     addPortions = dishes.map(d=>{
-      const base = suggestedPortion(d.dish);
-      return { base:base, text:base, per:{}, open:false };
+      const dp = defaultPortion(d.dish);
+      return { qty:dp.qty, measure:dp.measure, per:{}, open:false };
     });
     openSheet(`
       <h2>Add to the menu</h2>
@@ -1577,15 +1632,6 @@
     dishes.forEach((d,di)=>renderPortionRow(di, d.dish));
   }
 
-  // The suggested serving. A recommendation carries one now; otherwise the library's
-  // own portion, and failing both a blank box rather than an invented number.
-  function suggestedPortion(dish){
-    const k = String(dish||'').trim().toLowerCase();
-    const fromMenu = (pages[pageIdx]||[]).find(m=>String(m.dish||'').trim().toLowerCase()===k);
-    if (fromMenu && fromMenu.portion) return String(fromMenu.portion);
-    const e = dishMacros[k];
-    return (e && e.portion) ? String(e.portion) : '';
-  }
 
   // Rendered separately from the sheet so a keystroke can update the kcal readout
   // without rebuilding the sheet and losing focus.
@@ -1593,72 +1639,62 @@
     const box = document.getElementById('am-pt-' + di);
     if (!box) return;
     const st = addPortions[di];
-    const e = dishMacros[String(dish||'').trim().toLowerCase()];
     const everyone = Object.keys(members);
-    const fx = portionFactor(st.text, st.base);
-    // The consequence of the edit, shown as a number. Without this the multiplier is
-    // invisible and a wrong guess only surfaces days later in the totals.
-    const readout = !st.base
-      ? `<span style="color:var(--text3);">Macros count as one serving</span>`
-      : !e
-        ? `<span style="color:var(--text3);">Not costed yet — logged as written</span>`
-        : fx.sure
-          ? `<span class="mono">${Math.round(e.kcal*fx.f)} kcal · ${Math.round(e.p*fx.f)} g protein</span>` +
-            (fx.f !== 1 ? `<span style="color:var(--haldi);"> · ×${fx.f}</span>` : '')
-          : `<span class="mono">${e.kcal} kcal · ${e.p} g protein</span>` +
-            `<span style="color:var(--text3);"> · counted as one serving</span>`;
-    box.innerHTML = `
-      <div style="display:flex;gap:8px;align-items:center;">
-        <input id="am-pt-in-${di}" value="${esc(st.text)}" placeholder="How much, per person"
-          style="flex:1;" oninput="portionTyped(${di}, ${jsAttr(dish)})">
-      </div>
-      <div class="tiny" style="margin-top:5px;">${readout}</div>
-      ${everyone.length > 1 ? (st.open
-        ? `<div style="margin-top:8px;padding-top:8px;border-top:0.5px solid var(--border);">
-             ${everyone.map(n=>`
-               <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
-                 <span class="tiny" style="flex:0 0 74px;">${esc(n)}</span>
-                 <input id="am-pt-${di}-${esc(n)}" value="${esc(st.per[n]||st.text)}"
-                   placeholder="${esc(st.text||'as above')}" style="flex:1;"
-                   oninput="portionPerTyped(${di}, ${jsAttr(n)})">
-               </div>`).join('')}
-             <button class="btn-ghost" style="padding:4px 0;min-height:0;font-size:12px;"
-               onclick="togglePortionPer(${di}, ${jsAttr(dish)})">Same for everyone</button>
-           </div>`
-        : `<button class="btn-ghost" style="padding:4px 0;min-height:0;font-size:12px;"
-             onclick="togglePortionPer(${di}, ${jsAttr(dish)})">Different amount per person</button>`) : ''}`;
+    box.innerHTML =
+      portionControls('am-pt-in-'+di, dish, st.qty, st.measure,
+                      'portionPicked(' + di + ', ' + jsAttr(dish) + ')') +
+      '<div class="tiny" style="margin-top:5px;">' +
+        portionReadout(dish, st.qty, st.measure) + '</div>' +
+      (everyone.length > 1 ? (st.open
+        ? '<div style="margin-top:8px;padding-top:8px;border-top:0.5px solid var(--border);">' +
+            everyone.map(n=>{
+              const pv = st.per[n] || { qty:st.qty, measure:st.measure };
+              return '<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">' +
+                '<span class="tiny" style="flex:0 0 74px;">' + esc(n) + '</span>' +
+                '<div style="flex:1;">' +
+                  portionControls('am-pt-'+di+'-'+esc(n), dish, pv.qty, pv.measure,
+                                  'portionPerPicked(' + di + ', ' + jsAttr(n) + ')') +
+                '</div></div>';
+            }).join('') +
+            '<button class="btn-ghost" style="padding:4px 0;min-height:0;font-size:12px;" ' +
+              'onclick="togglePortionPer(' + di + ', ' + jsAttr(dish) + ')">Same for everyone</button>' +
+          '</div>'
+        : '<button class="btn-ghost" style="padding:4px 0;min-height:0;font-size:12px;" ' +
+            'onclick="togglePortionPer(' + di + ', ' + jsAttr(dish) + ')">Different amount per person</button>') : '');
   }
 
-  function portionTyped(di, dish){
-    const el = document.getElementById('am-pt-in-' + di);
-    addPortions[di].text = el ? el.value : '';
+  // Only the readout is refreshed, never the whole row — rebuilding it mid-choice
+  // would close the picker the person is still looking at.
+  function portionPicked(di, dish){
+    const q = document.getElementById('am-pt-in-' + di + '-q');
+    const m = document.getElementById('am-pt-in-' + di + '-m');
     const st = addPortions[di];
-    // Re-rendering would steal focus mid-word, so only the readout is refreshed.
+    if (q) st.qty = parseFloat(q.value) || 1;
+    if (m) st.measure = m.value;
     const box = document.getElementById('am-pt-' + di);
-    if (!box) return;
-    const line = box.querySelector('.tiny');
-    if (!line) return;
-    const e = dishMacros[String(dish||'').trim().toLowerCase()];
-    const fx = portionFactor(st.text, st.base);
-    line.innerHTML = !st.base
-      ? `<span style="color:var(--text3);">Macros count as one serving</span>`
-      : !e
-        ? `<span style="color:var(--text3);">Not costed yet — logged as written</span>`
-        : fx.sure
-          ? `<span class="mono">${Math.round(e.kcal*fx.f)} kcal · ${Math.round(e.p*fx.f)} g protein</span>` +
-            (fx.f !== 1 ? `<span style="color:var(--haldi);"> · ×${fx.f}</span>` : '')
-          : `<span class="mono">${e.kcal} kcal · ${e.p} g protein</span>` +
-            `<span style="color:var(--text3);"> · counted as one serving</span>`;
+    const line = box && box.querySelector('.tiny');
+    if (line) line.innerHTML = portionReadout(dish, st.qty, st.measure);
   }
-  function portionPerTyped(di, person){
-    const el = document.getElementById('am-pt-' + di + '-' + person);
-    if (el) addPortions[di].per[person] = el.value;
+  function portionPerPicked(di, person){
+    const q = document.getElementById('am-pt-' + di + '-' + person + '-q');
+    const m = document.getElementById('am-pt-' + di + '-' + person + '-m');
+    const st = addPortions[di];
+    st.per[person] = { qty: q ? (parseFloat(q.value)||1) : st.qty,
+                       measure: m ? m.value : st.measure };
   }
   function togglePortionPer(di, dish){
     const st = addPortions[di];
     st.open = !st.open;
     if (!st.open) st.per = {};   // collapsing means "same for everyone" literally
     renderPortionRow(di, dish);
+  }
+
+  // Everything written about a portion, in one place. v4.8: just the two fields.
+  // Portion/PortionFactor are gone from the sheet — a sentence and a multiplier that
+  // could not be checked against anything.
+  function portionPayload(dish, pv){
+    return { qty: (pv && pv.qty) || 1,
+             measure: (pv && pv.measure) || 'Katori, standard' };
   }
 
   async function commitAddToMenu(dishNames){
@@ -1670,14 +1706,12 @@
     dishNames.forEach((dish,di)=>{
       const el = document.getElementById('am-'+di);
       const who = el ? [...el.querySelectorAll('.chip.on')].map(c=>c.dataset.v) : [];
-      const st = addPortions[di] || { base:'', text:'', per:{} };
+      const st = addPortions[di] || { qty:1, measure:'Katori, standard', per:{} };
       who.forEach(person => {
-        // Per-person override if one was typed, otherwise the shared portion.
-        const text = String(st.per[person] != null && String(st.per[person]).trim()
-          ? st.per[person] : st.text || '').trim();
-        const fx = portionFactor(text, st.base);
-        items.push({ dish:dish, date:date, slot:slot, person:person, source:'pick',
-                     portion:text, portionFactor:fx.f });
+        // Per-person override if one was set, otherwise the shared portion.
+        const pv = st.per[person] || { qty:st.qty, measure:st.measure };
+        items.push(Object.assign({ dish:dish, date:date, slot:slot, person:person,
+                                   source:'pick' }, portionPayload(dish, pv)));
       });
     });
     closeSheet();
@@ -1687,6 +1721,9 @@
     items.forEach(it => menuBoard.push(Object.assign({ id:'tmp'+Math.random(), status:'open', logId:'' }, it)));
     picked_ = new Set();
     renderMenuBoard(); renderMenu();
+    // Fired here rather than at the other addMenuItems call sites, which are a plan
+    // being materialised and a swap being applied — machinery, not a person choosing.
+    logEv('menu_add', items.map(i => i.dish).filter(Boolean).join(', ').slice(0, 120));
     const r = await sheetPost({ action:'addMenuItems', addedBy:activePerson, items:items });
     if (!r || r.error || r.success === false){
       menuBoard = snapshot;
@@ -2164,20 +2201,21 @@
     const v = menuView(), date = v.date, slot = v.slot;
     const g = menuGrouped(date, slot, true).find(x=>x.dish.toLowerCase()===String(dish).toLowerCase());
     if (!g){ toast("That dish isn't on the menu"); return; }
-    const base = suggestedPortion(dish);
-    const e = dishMacros[String(dish).trim().toLowerCase()];
+    const d = dishFor(dish);
     // Existing per-person amounts are read off the rows, so opening the expander
     // shows what is actually stored rather than resetting everyone to the shared value.
     const per = {};
-    g.rows.forEach(r=>{ if (r.portion) per[r.person] = r.portion; });
-    const mixed = new Set(g.rows.map(r=>String(r.portion||''))).size > 1;
-    addPortions = [{ base:base || g.portion || '', text:g.portion||'', per: mixed?per:{}, open:mixed }];
+    g.rows.forEach(r=>{ if (r.qty) per[r.person] = { qty:+r.qty, measure:r.measure||'' }; });
+    const mixed = new Set(g.rows.map(r=>String(r.qty||'') + '|' + String(r.measure||''))).size > 1;
+    const first = g.rows.find(r=>r.qty) || {};
+    const dp = defaultPortion(dish);
+    addPortions = [{ qty: +first.qty || dp.qty, measure: first.measure || dp.measure,
+                     per: mixed?per:{}, open:mixed }];
     openSheet(`
       <h2>Portion</h2>
       <p class="muted" style="margin:8px 0 4px;">${esc(dish)} — ${esc(whoLabel(g.for))}</p>
-      ${e ? `<div class="tiny" style="margin-bottom:14px;color:var(--text3);">
-        One serving is ${e.kcal} kcal · ${e.p} g protein. Changing the amount changes
-        what gets logged.</div>`
+      ${d && d.servingLabel ? `<div class="tiny" style="margin-bottom:14px;color:var(--text3);">
+        ${esc(d.servingLabel)}. Changing the amount changes what gets logged.</div>`
       : `<div class="tiny" style="margin-bottom:14px;color:var(--text3);">
         This dish isn't costed yet, so the amount is an instruction to the cook only.</div>`}
       <div id="am-pt-0"></div>
@@ -2205,13 +2243,12 @@
     const writes = [];
     if (st.open && Object.keys(st.per).length){
       g.for.forEach(person=>{
-        const text = String(st.per[person] != null && String(st.per[person]).trim()
-          ? st.per[person] : st.text || '').trim();
-        writes.push({ person, text, f: portionFactor(text, st.base).f });
+        const pv = st.per[person] || { qty:st.qty, measure:st.measure };
+        writes.push(Object.assign({ person }, portionPayload(dish, pv)));
       });
     } else {
-      const text = String(st.text||'').trim();
-      writes.push({ person:'', text, f: portionFactor(text, st.base).f });
+      writes.push(Object.assign({ person:'' },
+        portionPayload(dish, { qty:st.qty, measure:st.measure })));
     }
 
     const snapshot = menuBoard.slice();
@@ -2220,13 +2257,13 @@
       if (String(m.dish||'').toLowerCase() !== String(dish).toLowerCase()) return m;
       if (String(m.status||'open') === 'expired') return m;
       const w = writes.find(x=>!x.person || x.person === m.person);
-      return w ? Object.assign({}, m, { portion:w.text, portionFactor:w.f }) : m;
+      return w ? Object.assign({}, m, { qty:w.qty, measure:w.measure }) : m;
     });
     renderMenuBoard(); renderToday();
 
     for (const w of writes){
       const r = await sheetPost({ action:'updateMenuPortion', date, slot, dish,
-        person:w.person, portion:w.text, portionFactor:w.f, includeLogged:eaten });
+        person:w.person, qty:w.qty, measure:w.measure, includeLogged:eaten });
       if (!r || r.error || r.success === false){
         menuBoard = snapshot;
         renderMenuBoard(); renderToday();
@@ -2417,7 +2454,7 @@
     const name = ((el && el.value) || '').trim();
     if (!name){ toast('Type a dish first'); return; }
     const v = menuView();
-    const known = !!dishMacros[name.toLowerCase()];
+    const known = !!dishInfo[name.toLowerCase()];
     addDishesToMenu([name],
       known ? '' : "It's not in the dish list yet — macros will fill in once it's logged.",
       v.date, v.slot);
@@ -2783,7 +2820,7 @@
       if (!s.dish) return;
       let src = s;
       if (s.kcal == null){
-        const e = dishMacros[s.dish.toLowerCase()];
+        const e = dishInfo[s.dish.toLowerCase()];
         if (e) src = { kcal:e.kcal, p:e.p, c:e.c, f:e.f, fib:e.fib };
         else { t.unknown++; return; }
       }
@@ -3199,7 +3236,7 @@
     const d = planDraft && planDraft.plan[planDayIdx];
     if (!d || !swapSlot) return;
     const keep = normalisePlanSlot(d.slots[swapSlot]);
-    const e = dishMacros[name.toLowerCase()];
+    const e = dishInfo[name.toLowerCase()];
     d.slots[swapSlot] = { dish:name, portion: e ? keep.portion : '',
       kcal: e ? e.kcal : null, p: e ? e.p : null, c: e ? e.c : null,
       f: e ? e.f : null, fib: e ? e.fib : null };
@@ -3229,7 +3266,7 @@
     const cur = normalisePlanSlot(d.slots[slot]);
     const name = String(val||'').trim();
     if (name.toLowerCase() === cur.dish.toLowerCase()){ cur.dish = name; d.slots[slot] = cur; return; }
-    const e = dishMacros[name.toLowerCase()];
+    const e = dishInfo[name.toLowerCase()];
     d.slots[slot] = { dish:name, portion:cur.portion,
       kcal: e ? e.kcal : null, p: e ? e.p : null, c: e ? e.c : null,
       f: e ? e.f : null, fib: e ? e.fib : null };
@@ -3299,24 +3336,14 @@
     suggestPlanShopping(items);
   }
 
-  function seedLibraryFromPlan(p){
-    const seen = {};
-    (p.plan||[]).forEach(d=>{
-      Object.keys(d.slots||{}).forEach(sl=>{
-        const s = normalisePlanSlot(d.slots[sl]);
-        const k = s.dish.toLowerCase();
-        if (!s.dish || s.kcal == null || seen[k]) return;
-        if (dishMacros[k] && dishMacros[k].kcal) return;   // already known — leave it alone
-        seen[k] = 1;
-        dishMacros[k] = Object.assign(dishMacros[k]||{}, {
-          kcal:s.kcal, p:s.p||0, c:s.c||0, f:s.f||0,
-          fib:(s.fib==null?null:s.fib), source:'estimated' });
-        defer(()=> sheetPost({ action:'saveDishLibrary', dish:s.dish, kcal:s.kcal,
-          protein:s.p||0, carbs:s.c||0, fat:s.f||0, fiber:s.fib,
-          source:'estimated', updatedBy:p.person || activePerson }));
-      });
-    });
-  }
+  // v4.8. Was: take the macros Claude guessed while drafting a meal plan and write
+  // them into the library as fact. That is exactly backwards now — the library
+  // computes macros from ingredients, and a guessed number written over a formula
+  // would kill the self-correction permanently.
+  //
+  // Kept as a no-op rather than deleted so the three call sites read unchanged. A
+  // dish the library does not know is added properly through addDishToLibrary.
+  function seedLibraryFromPlan(p){ return; }
 
   // ── What to buy for it ──
   // The plan's real second job: knowing on Sunday what Thursday needs. Deliberately
@@ -3561,7 +3588,7 @@
       return;
     }
     box.innerHTML = dishes.map(d=>{
-      const e = dishMacros[d.toLowerCase()];
+      const e = dishInfo[d.toLowerCase()];
       const sub = e ? ` <span class="mono" style="font-size:11px;color:var(--dhania)">${e.p}p</span>` : '';
       return `<button class="chip" onclick="quickLog(${jsAttr(d)})">${esc(d)}${sub}</button>`;
     }).join('') + `<button class="chip" onclick="openLogSheet()" aria-label="Log something else">+</button>`;
@@ -3755,7 +3782,7 @@
   let estimating = {};
   async function estimateMacros(dish){
     const key = dish.trim().toLowerCase();
-    const have = dishMacros[key];
+    const have = dishInfo[key];
     // Fibre arrived after most of this database was built, so a dish can be
     // "known" and still have no fibre figure. Re-estimate exactly those, and only
     // when the dish is actually eaten — no bulk backfill, no cost for dishes
@@ -3775,13 +3802,14 @@
           ? Object.assign({}, have, { fib:(r.fib==null?null:+r.fib||0) })
           : { kcal:+r.kcal||0, p:+r.p||0, c:+r.c||0, f:+r.f||0,
               fib:(r.fib==null?null:+r.fib||0), source:'estimated' };
-        dishMacros[key] = entry;
+        dishInfo[key] = entry;
         renderToday();
         // Persist to the shared DB (fire-and-forget; a failed write just means
         // it'll be re-estimated next time, never a crash).
-        sheetPost({ action:'saveDishLibrary', dish:dish.trim(), kcal:entry.kcal,
-          protein:entry.p, carbs:entry.c, fat:entry.f, fiber:entry.fib,
-          source:entry.source || 'estimated', updatedBy:activePerson });
+        // v4.8. saveDishLibrary is gone. A dish the library does not know is added
+        // through addDishToLibrary, which writes INPUTS (its class and ingredients)
+        // and lets the sheet compute the macros. Writing numbers here would have
+        // overwritten the formulas that make the whole thing self-correcting.
         return entry;
       } catch(e){ return null; }
       finally { delete estimating[key]; }
@@ -4275,29 +4303,17 @@
     // toast, not msStatus: the #ms-status element belongs to the setup sheet and
     // does not exist while the approval list is open, so msStatus would no-op here
     // and the tap would look like nothing happened.
-    if (!keep.length){ toast('Nothing checked — nothing saved'); return; }
-    openMacroSetup();
-    msStatus(`Saving ${keep.length}<span class="dots"></span>`);
-    let ok=0, draft=0;
-    for (const r of keep){
-      const res = await sheetPost({ action:'saveRecipe', dishID:r.dishID, dish:r.dish,
-        items:r.items, yieldGrams:r.yieldGrams, servings:r.servings,
-        // Provenance matters later: an edited recipe carries a human's judgement
-        // about the grams and should not be silently re-drafted by a future batch.
-        source: r.edited ? 'edited' : 'claude-draft', updatedBy: activePerson || '' });
-      if (res && res.success){ ok++; if (res.status==='draft') draft++; }
-    }
-    msStatus(`Saved ${ok} recipe(s)` + (draft?`, ${draft} as draft (no yield).`:'.'));
-    syncAll(true);
+    // v4.8. Recipes are gone; DishIngredients replaced them and is written through
+    // addDishToLibrary, which keeps the sheet's formulas intact. This batch writer
+    // would have posted to a deleted action.
+    toast('Recipes have moved into the library');
+    return;
   }
 
+  // v4.8. Archiving the old Claude-guessed macros is meaningless now: the table it
+  // archived no longer exists, and nothing stores a guessed macro to archive.
   async function msArchive(){
-    msStatus('Archiving old estimates<span class="dots"></span>');
-    const r = await sheetPost({ action:'archiveDishMacros' });
-    msStatus(r && r.success
-      ? `Archived ${r.archived} of ${r.total}. Old values kept in the Archived* columns.`
-      : 'Archive failed.');
-    syncAll(true);
+    msStatus('Nothing to archive — macros are computed in the library now.');
   }
 
   // ══════════ KITCHEN ══════════
@@ -4512,8 +4528,11 @@
   async function suggestDeduction(dish, servings){
     if (!inventory.length) return;
     try {
-      const exact = await sheetPost({ action:'deductionForMeal',
-        dishID: String(dish||'').toLowerCase(), servings: servings || 1 });
+      // v4.8. Reads DishIngredients through the portion math, so the amount deducted
+      // is the amount actually eaten rather than a count of notional "servings".
+      const dp = defaultPortion(dish);
+      const exact = await sheetPost({ action:'deductionForPortion',
+        dish: String(dish||''), qty: (servings || 1) * dp.qty, measure: dp.measure });
       if (exact && exact.exact && exact.deductions.length){
         return renderDeductionSheet(dish, exact.deductions.map(d=>{
           // Match the recipe's ingredient back to the stock row it should reduce.
@@ -4784,7 +4803,7 @@
       protein: x.protein, portion: x.portion, missing: x.missing, hints: x.hints,
       details: null, prep: x.prep, prepHours: x.prepHours,
       scope: x.scope, addedBy: x.addedBy,
-      common: (dishMacros[String(x.dish||'').trim().toLowerCase()]||{}).common
+      common: (dishInfo[String(x.dish||'').trim().toLowerCase()]||{}).common
     })));
     return out.length ? out : [];
   }
@@ -4961,9 +4980,9 @@
         (t.style ? `prefers ${t.style}; ` : '') +
         `favourites ${p.favourites||'none'}; allergies ${p.allergies||'none'}; protein target ${p.protein} g`;
     }).join('\n');
-    const wellMade = Object.entries(dishMacros).filter(([,m])=>m.rating==='favourite').map(([k])=>cap(k));
-    const poorlyMade = Object.entries(dishMacros).filter(([,m])=>m.rating==='avoid').map(([k])=>cap(k));
-    const cantMake = Object.entries(dishMacros).filter(([,m])=>m.knows==='no').map(([k])=>cap(k));
+    const wellMade = Object.entries(dishInfo).filter(([,m])=>m.rating==='favourite').map(([k])=>cap(k));
+    const poorlyMade = Object.entries(dishInfo).filter(([,m])=>m.rating==='avoid').map(([k])=>cap(k));
+    const cantMake = Object.entries(dishInfo).filter(([,m])=>m.knows==='no').map(([k])=>cap(k));
     const slot = activeSlot();
     const known = repertoire(25);
     const blocked = blockedDishes();
@@ -5017,7 +5036,7 @@
         `include names who have a notable reaction.\n` +
         // v3.11. `why` and `common` are dropped from the ask.
         //  - `common` is a FACT about the dish, already in the shared DishLibrary and
-        //    already hydrated into dishMacros[k].common on every sync. Paying Claude to
+        //    already hydrated into dishInfo[k].common on every sync. Paying Claude to
         //    restate what we own was buying our own data back, once per dish, every menu.
         //  - `why` was only ever a LAST-RESORT label: renderMenu shows hints first, then
         //    cook-knows, then rating, and reached `why` only when all three were empty.
@@ -5057,7 +5076,7 @@
         // From the shared library when we know the dish, undefined for one we've
         // never seen. renderMenu already treats "not false" as say-nothing, so an
         // unknown dish loses one minor label rather than gaining a wrong one.
-        common: (dishMacros[String(x.dish||'').trim().toLowerCase()]||{}).common
+        common: (dishInfo[String(x.dish||'').trim().toLowerCase()]||{}).common
       }));
       if (!newMenu.length) throw new Error('empty menu');
       // The prompt asks; this enforces. Skipped when a craving is on, and never
@@ -5071,15 +5090,14 @@
       // written when they're new, so this costs nothing on a warm library.
       newMenu.forEach(m=>{
         const k = m.dish.trim().toLowerCase();
-        const cur = dishMacros[k];
+        const cur = dishInfo[k];
         if (cur && cur.prepNote) return;
         if (!m.prep && m.common !== false) return;
-        const payload = { action:'saveDishLibrary', dish:m.dish.trim(),
-          // `common` is deliberately not sent any more: we no longer ask for it, so
-          // writing it back would persist a value the menu never confirmed.
-          // saveDishLibrary keeps the previous value for any field omitted.
-          prepNote:m.prep||'', prepHours:m.prepHours||0,
-          updatedBy:activePerson };
+        // v4.8. Writes the three prep columns in the library catalog and nothing
+        // else. `common` is deliberately not sent: we no longer ask for it, so
+        // writing it back would persist a value the menu never confirmed.
+        const payload = { action:'setDishPrep', dish:m.dish.trim(),
+          prepNote:m.prep||'', prepHours:m.prepHours||0 };
         defer(()=>sheetPost(payload));
       });
       // v3.12. Publish, don't overwrite. `addCookNext` appends and skips dishes
@@ -5139,7 +5157,7 @@
     Object.entries(m.hints || {}).forEach(([n,h])=>{ if (h) notes.push(`${n===activePerson?'':n+': '}${h}`.trim()); });
     if (cookKnows(m.dish) === 'unknown' && m.common === false) notes.push('new to her');
     if (cookKnows(m.dish) === 'no') notes.push("she doesn't make this");
-    const rating = (dishMacros[m.dish.toLowerCase()]||{}).rating;
+    const rating = (dishInfo[m.dish.toLowerCase()]||{}).rating;
     if (!notes.length && rating === 'favourite') notes.push('she makes this well');
     // `why` is no longer generated (v3.11). What replaces it is derived from data we
     // already hold, which was the point — those labels were more useful than `why`.
@@ -5162,7 +5180,7 @@
       const expanded = expandedDish === i;
       const d = m.details;
       const pr = prepFor(m);
-      const rating = (dishMacros[m.dish.toLowerCase()]||{}).rating;
+      const rating = (dishInfo[m.dish.toLowerCase()]||{}).rating;
       const detailBits = expanded ? [
         d === null ? `<div class="muted">Loading<span class="dots"></span></div>`
           : d === false ? `<div class="muted">Couldn't load the details. Tap ⓘ again to retry.</div>`
@@ -5297,7 +5315,7 @@
       else if (out[k].rank === rank && !out[k].tag) out[k].tag = tag;
     };
     // Library / macro DB — the widest pool, lowest trust.
-    Object.entries(dishMacros).forEach(([k,e])=>{
+    Object.entries(dishInfo).forEach(([k,e])=>{
       if (e && e.knows === 'no') return;            // she can't make it — never offer it
       add(cap(k), 0, '');
     });
@@ -5319,12 +5337,12 @@
       counts[k].n++;
     });
     Object.values(counts).forEach(c=>{
-      const e = dishMacros[c.name.toLowerCase()];
+      const e = dishInfo[c.name.toLowerCase()];
       if (e && e.knows === 'no') return;
       add(c.name, 3, c.n > 1 ? 'cooked here ' + c.n + '×' : 'cooked here once');
     });
     // Dishes she is known to make well outrank everything.
-    Object.entries(dishMacros).forEach(([k,e])=>{
+    Object.entries(dishInfo).forEach(([k,e])=>{
       if (!e) return;
       const nice = (counts[k] && counts[k].name) || cap(k);
       if (e.rating === 'favourite') add(nice, 4, '★ she makes this well');
@@ -5408,7 +5426,7 @@
     if (!name){ toast('Type a dish first'); return; }
     customOpen = false;
     renderMenu();
-    const known = !!dishMacros[name.toLowerCase()];
+    const known = !!dishInfo[name.toLowerCase()];
     addDishesToMenu([name], known ? '' : "It's not in the dish list yet — macros will fill in once it's logged.");
   }
 
@@ -5533,7 +5551,7 @@
       if (!m.date || m.date < since) return;
       const k = String(m.dish||'').trim().toLowerCase();
       if (!k || seen[k]) return;
-      if ((dishMacros[k]||{}).rating) return;    // already rated — never ask twice
+      if ((dishInfo[k]||{}).rating) return;    // already rated — never ask twice
       seen[k] = 1;
       out.push(String(m.dish).trim());
     });
@@ -5599,17 +5617,17 @@
     if (knowsSave.length){
       knowsSave.forEach(({dish,knows})=>{
         const key = dish.toLowerCase();
-        if (!dishMacros[key]) dishMacros[key] = { kcal:0,p:0,c:0,f:0,source:'estimated',rating:'',ratingCount:0,knows:'' };
-        dishMacros[key].knows = knows;
+        if (!dishInfo[key]) dishInfo[key] = { kcal:0,p:0,c:0,f:0,source:'estimated',rating:'',ratingCount:0,knows:'' };
+        dishInfo[key].knows = knows;
       });
     }
     const f = ratingFollowUp; ratingFollowUp = null;
     if (toSave.length){
       toSave.forEach(({dish,rating})=>{
         const key = dish.toLowerCase();
-        if (!dishMacros[key]) dishMacros[key] = { kcal:0,p:0,c:0,f:0,source:'estimated',rating:'',ratingCount:0 };
-        dishMacros[key].rating = rating;
-        dishMacros[key].ratingCount = (dishMacros[key].ratingCount||0) + 1;
+        if (!dishInfo[key]) dishInfo[key] = { kcal:0,p:0,c:0,f:0,source:'estimated',rating:'',ratingCount:0 };
+        dishInfo[key].rating = rating;
+        dishInfo[key].ratingCount = (dishInfo[key].ratingCount||0) + 1;
       });
       renderAll();
       toast(toSave.length>1 ? 'Ratings saved' : 'Rating saved');
@@ -6080,12 +6098,11 @@
         } else {
           text = (d.dish_name || 'Meal') +
                  (d.components && d.components.length ? ' — ' + d.components.join(', ') : '');
-          if (d.protein || d.calories){
-            const key = text.toLowerCase();
-            dishMacros[key] = { kcal:+d.calories||0, p:+d.protein||0, c:+d.carbs||0, f:+d.fat||0, source:'estimated' };
-            sheetPost({ action:'saveDishMacros', dish:text, kcal:+d.calories||0,
-              protein:+d.protein||0, carbs:+d.carbs||0, fat:+d.fat||0, source:'estimated', updatedBy:activePerson });
-          }
+          // v4.8. A photo scan no longer writes macros anywhere. It used to push
+          // Claude's guess into the shared library, where it became "the" number for
+          // that dish in every household. The library computes macros from
+          // ingredients now, and a dish it does not know gets added properly through
+          // addDishToLibrary rather than by a snapshot of someone's plate.
         }
 
         const el = document.getElementById(targetId);
@@ -6185,9 +6202,9 @@
         Tapping a few dishes you like makes every suggestion better — and it's faster than typing.</div>`);
 
     const lang = LANGS[settings.cookLang] || LANGS.hi;
-    const total = Object.keys(dishMacros).length;
-    const confirmed = Object.values(dishMacros).filter(d=>d.source==='confirmed').length;
-    const noFib = Object.values(dishMacros).filter(d=>d.fib==null).length;
+    const total = Object.keys(dishInfo).length;
+    const confirmed = Object.values(dishInfo).filter(d=>d.source==='confirmed').length;
+    const noFib = Object.values(dishInfo).filter(d=>d.fib==null).length;
     document.getElementById('y-dishcount').textContent = total
       ? `${total} dish${total===1?'':'es'} · ${confirmed} confirmed, ${total-confirmed} estimated` +
         (noFib ? ` · ${noFib} without fibre yet` : '')
@@ -6298,7 +6315,7 @@
 
   // ══════════ DISH DATABASE ══════════
   function openDishDB(){
-    const entries = Object.entries(dishMacros).sort((a,b)=>a[0].localeCompare(b[0]));
+    const entries = Object.entries(dishInfo).sort((a,b)=>a[0].localeCompare(b[0]));
     if (!entries.length){
       openSheet(`<h2>Dish database</h2>
         <p class="muted" style="margin-top:12px;">Empty for now. As you log meals, each new dish is
@@ -6332,7 +6349,7 @@
 
   function filterDishDB(q){
     q = (q||'').toLowerCase();
-    const entries = Object.entries(dishMacros)
+    const entries = Object.entries(dishInfo)
       .filter(([k])=>k.includes(q)).sort((a,b)=>a[0].localeCompare(b[0]));
     const el = document.getElementById('db-list');
     if (el) el.innerHTML = entries.length ? dishDBRows(entries)
@@ -6340,7 +6357,7 @@
   }
 
   function editDish(key){
-    const m = dishMacros[key];
+    const m = dishInfo[key];
     if (!m) return;
     openSheet(`
       <h2>${esc(cap(key))}</h2>
@@ -6356,7 +6373,7 @@
   }
 
   async function saveDish(key){
-    const m = dishMacros[key] || { source:'estimated' };
+    const m = dishInfo[key] || { source:'estimated' };
     m.kcal = +document.getElementById('ed-kcal').value || 0;
     m.p    = +document.getElementById('ed-p').value || 0;
     m.c    = +document.getElementById('ed-c').value || 0;
@@ -6364,11 +6381,13 @@
     const fibEl = document.getElementById('ed-fib');
     m.fib  = fibEl && fibEl.value !== '' ? +fibEl.value : m.fib;
     m.source = 'confirmed';
-    dishMacros[key] = m;
+    dishInfo[key] = m;
     closeSheet(); renderAll();
     toast('Saved as confirmed');
-    await sheetPost({ action:'saveDishLibrary', dish:cap(key), kcal:m.kcal,
-      protein:m.p, carbs:m.c, fat:m.f, fiber:m.fib, source:'confirmed', updatedBy:activePerson });
+        // v4.8. saveDishLibrary is gone. A dish the library does not know is added
+        // through addDishToLibrary, which writes INPUTS (its class and ingredients)
+        // and lets the sheet compute the macros. Writing numbers here would have
+        // overwritten the formulas that make the whole thing self-correcting.
   }
 
   function openCookSettings(){
@@ -6574,9 +6593,9 @@
     TASTE_SEED.dish.forEach(add);
     // Anything the household already eats but hasn't been marked — the second
     // person to set up a phone shouldn't be shown a list missing their own food.
-    // dishMacros is keyed BY the dish name (lowercased) and carries no display
+    // dishInfo is keyed BY the dish name (lowercased) and carries no display
     // field, so the key is the name; title-case it to sit level with the seeds.
-    Object.keys(dishMacros).forEach(k => {
+    Object.keys(dishInfo).forEach(k => {
       if (seen[k]) return;
       add(k.replace(/\b[a-z]/g, c => c.toUpperCase()));
     });
@@ -6587,7 +6606,7 @@
   // than a "is this the first person" flag: if whoever created the house skipped
   // it, the next person to set up a phone gets asked instead of nobody being asked.
   function repertoireCount(){
-    return Object.keys(dishMacros).filter(k => (dishMacros[k]||{}).knows === 'yes').length;
+    return Object.keys(dishInfo).filter(k => (dishInfo[k]||{}).knows === 'yes').length;
   }
 
   function maybeCookSeed(){
@@ -6655,8 +6674,8 @@
       // they come back — is the only one generated without a repertoire.
       dishes.forEach(d => {
         const k = d.toLowerCase();
-        if (!dishMacros[k]) dishMacros[k] = { kcal:0,p:0,c:0,f:0,source:'estimated',rating:'',ratingCount:0 };
-        dishMacros[k].knows = 'yes';
+        if (!dishInfo[k]) dishInfo[k] = { kcal:0,p:0,c:0,f:0,source:'estimated',rating:'',ratingCount:0 };
+        dishInfo[k].knows = 'yes';
       });
       toast(`Saved ${dishes.length} ${dishes.length===1?'dish':'dishes'}`);
       // source:'seeded' is what keeps check 6 honest — these dishes were tapped,
@@ -7000,7 +7019,7 @@
       picks:members[name].picks });
 
     // The repertoire question comes last, after the sheet writes, because it needs
-    // dishMacros hydrated to know whether the kitchen already has one. If it does,
+    // dishInfo hydrated to know whether the kitchen already has one. If it does,
     // this is a returning household and nobody gets asked again.
     if (maybeCookSeed()) return;
     toast('All set. Log your first meal from Today.');
@@ -7125,7 +7144,7 @@
 
   async function init(){
     loadLocal();
-    // dishMacros is no longer cached locally — it hydrates from the shared
+    // dishInfo is no longer cached locally — it hydrates from the shared
     // DishMacros sheet on the first syncAll(), so the whole household shares one DB.
 
     // Voice list loads async on most browsers; touching it early warms it up.
