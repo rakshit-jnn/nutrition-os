@@ -539,7 +539,7 @@
   const VISION_API = '/api/vision';
   const MODEL      = 'claude-sonnet-4-5';
   const SHEET_URL  = 'https://script.google.com/macros/s/AKfycbxXDdY5y_QUVIML1Zb4nwTnuryI_Uqhe-EGwc_iDT_s5OZ9wJNcfWvILo4rCC5bN6XT/exec';
-  const VERSION    = 'v4.6';
+  const VERSION    = 'v4.9';
 
   // ══════════ HOUSEHOLD (v4.0) ══════════
   // Every request now carries which household it belongs to. Stored on the device
@@ -1154,9 +1154,19 @@
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ tier:tier||'smart', hh:HH, max_tokens:maxTokens||900, messages:[{role:'user',content:prompt}] })
     });
-    const d = await r.json();
-    if (d.error) throw new Error(d.error.message || 'Claude unavailable');
-    return (d.content||[]).map(b=>b.text||'').join('');
+    // v4.9. The reason used to be lost here: a string `error` (the proxy's own, e.g.
+    // "API key not configured") has no .message, and a non-JSON reply (a 404 page when
+    // a function isn't deployed) threw an unreadable parse error. Both now say what
+    // happened and the HTTP status, because every failure used to look identical.
+    let d;
+    try { d = await r.json(); }
+    catch(e){ throw new Error('The Claude proxy sent an unreadable reply (HTTP ' + r.status + ')'); }
+    if (d && d.error){
+      const why = typeof d.error === 'string' ? d.error
+                : (d.error.message || d.error.type || 'Claude unavailable');
+      throw new Error(why + ' (HTTP ' + r.status + ')');
+    }
+    return ((d && d.content)||[]).map(b=>b.text||'').join('');
   }
   async function askJSON(prompt, maxTokens, tier){
     const raw = await askClaude(prompt + '\n\nRespond with JSON only. No prose, no markdown fences.', maxTokens, tier);
@@ -1306,6 +1316,40 @@
   }
   const QTY_STEPS = [0.5, 1, 1.5, 2, 3];
 
+  // v4.9. portionControls / portionReadout were deleted by the v4.8 cleanout while
+  // renderPortionRow, portionPicked and portionPerPicked still called them, so opening
+  // "Add to the menu" threw. Rebuilt to the contract those callers already use: two
+  // <select>s whose ids are `<idBase>-q` and `<idBase>-m`, and a readout line.
+  //
+  // A stored value that is not in the list (say a piece dish once logged in katori) is
+  // ADDED to the list rather than silently swapped for the first option: otherwise the
+  // wheel would show one thing while the state, and what gets saved, said another.
+  function portionControls(idBase, dish, qty, measure, onchangeExpr){
+    const q = parseFloat(qty) > 0 ? parseFloat(qty) : 1;
+    const qs = QTY_STEPS.indexOf(q) >= 0 ? QTY_STEPS : QTY_STEPS.concat([q]).sort((a,b)=>a-b);
+    const ms = measureOptions(dish).slice();
+    const cur = String(measure || '').trim();
+    if (cur && ms.indexOf(cur) < 0) ms.unshift(cur);
+    const chosen = cur || ms[0];
+    const qOpts = qs.map(v => '<option value="' + v + '"' + (v === q ? ' selected' : '') + '>' + v + '</option>').join('');
+    const mOpts = ms.map(m => '<option value="' + esc(m) + '"' + (m === chosen ? ' selected' : '') + '>' + esc(m) + '</option>').join('');
+    return '<div style="display:flex;gap:8px;">' +
+      '<select id="' + idBase + '-q" onchange="' + onchangeExpr + '" style="flex:0 0 84px;">' + qOpts + '</select>' +
+      '<select id="' + idBase + '-m" onchange="' + onchangeExpr + '" style="flex:1;min-width:0;">' + mOpts + '</select>' +
+      '</div>';
+  }
+  // Three honest states, and none of them is zero: an uncosted dish says so rather than
+  // reporting 0 kcal, because that would make the day's total look achievable when it
+  // isn't. An estimated dish is marked as one for the same reason.
+  function portionReadout(dish, qty, measure){
+    const d = dishFor(dish);
+    if (!d) return 'Not in the food library yet \u2014 no calories counted for this';
+    const mm = macrosFor(dish, qty, measure);
+    if (!mm) return 'Not costed yet \u2014 no calories counted for this';
+    const est = (d.inputConfidence && d.inputConfidence !== 'confirmed') ? ' \u00b7 estimate' : '';
+    return mm.grams + ' g \u00b7 ' + Math.round(mm.kcal) + ' kcal \u00b7 ' + Math.round(mm.p) + ' g protein' + est;
+  }
+
   // v4.8. scaleMacros/mealFactor deleted with the multiplier they scaled by. A meal's
   // macros are now computed from its own Qty and Measure against the library, so there
   // is nothing to scale and nothing to guess a factor for.
@@ -1326,7 +1370,7 @@
       // Fibre arrived later than the other macros, so older rows genuinely don't
       // have it. Counting a blank as 0 would quietly under-report all day —
       // better to say how many dishes are missing it than to invent a number.
-      if (e.fib != null){ fib += e.fib * mf; fibKnown++; }
+      if (e.fib != null){ fib += e.fib; fibKnown++; }   // v4.9. was `* mf`, a multiplier deleted in v4.8; mm.fib is already for the logged amount
     });
     return { p:Math.round(p), c:Math.round(c), f:Math.round(f), kcal:Math.round(kcal),
              fib:Math.round(fib), fibKnown, fibTotal, count:meals.length };
@@ -3745,11 +3789,14 @@
     defer(() => {
       if (undone) return null;
       return (async () => {
-        for (const person of who)
+        // v4.9. Braces restored. Without them only logEv sat inside the loop, so
+        // `person` was out of scope at sheetPost: the meal was never saved.
+        for (const person of who){
           logEv('dish_logged', dish);
           await sheetPost({ action:'logMeal', mealName:dish, mealType:type, loggedBy:person,
                             source:opts.source || 'manual',
                             closeMenuRow:true, menuDate:today() });
+        }
         syncAll(true);
       })();
     });
@@ -5131,8 +5178,14 @@
       renderMenu();
       surprise = false;   // one generation only, not a mode you get stuck in
     } catch(e){
+      // v4.9. The cause is shown, not swallowed. Every failure in this function, a
+      // dead API key, an empty balance, the daily cap, a retired model, a code error,
+      // used to land on the same sentence, so none of them could be told apart.
+      console.error('menu build failed:', e);
+      const why = esc(String((e && e.message) || e || 'unknown error').slice(0, 220));
       box.innerHTML = `<div class="eyebrow" style="color:var(--haldi);">Cook next</div>
         <div class="muted" style="margin-top:10px;">Couldn't build the menu. Tap to try again.</div>
+        <div class="tiny" style="margin-top:6px;word-break:break-word;">Why: ${why}</div>
         <button style="width:100%;margin-top:12px;" onclick="loadMenu(true)">Try again</button>`;
     } finally { loadingMenu = false; surprise = false; }
   }
