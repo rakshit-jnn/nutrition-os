@@ -542,7 +542,7 @@
   const VISION_API = '/api/vision';
   const MODEL      = 'claude-sonnet-4-5';
   const SHEET_URL  = 'https://script.google.com/macros/s/AKfycbxXDdY5y_QUVIML1Zb4nwTnuryI_Uqhe-EGwc_iDT_s5OZ9wJNcfWvILo4rCC5bN6XT/exec';
-  const VERSION    = 'v4.15';
+  const VERSION    = 'v4.17';
 
   // ══════════ HOUSEHOLD (v4.0) ══════════
   // Every request now carries which household it belongs to. Stored on the device
@@ -7236,11 +7236,14 @@
         <button class="chip ${hhMode==='join'?'on':''}" onclick="setHhMode('join')">Join one</button>
       </div>
       ${hhMode === 'new' ? `
-        <div class="field"><input id="hh-name" placeholder="House name, e.g. Sharma home"></div>
+        <div class="field"><input id="hh-name" maxlength="30" autocapitalize="words" oninput="hhLive()" placeholder="House name, e.g. Sharma home"></div>
+        <div class="tiny" id="hh-name-note" style="margin-top:6px;">3 to 30 characters. Letters, numbers, spaces and hyphens only (no _ . @ # or emoji).</div>
         <div class="field" style="margin-top:10px;">
-          <input id="hh-cook" placeholder="Cook's name (optional)"></div>
+          <input id="hh-cook" maxlength="30" placeholder="Cook's name (optional)"></div>
+        <div class="tiny" style="margin-top:6px;">Letters and spaces only, up to 30.</div>
         <div class="field" style="margin-top:10px;">
-          <input id="hh-pin" inputmode="numeric" maxlength="8" placeholder="Choose a PIN"></div>
+          <input id="hh-pin" inputmode="numeric" maxlength="6" oninput="hhLive()" placeholder="Choose a PIN"></div>
+        <div class="tiny" id="hh-pin-note" style="margin-top:6px;">4 to 6 digits, numbers only. Avoid 0000 and 1234.</div>
         <p class="muted" style="font-size:12px;margin:10px 0 18px;">
           Anyone else in the house enters the house name and this PIN to join.
         </p>
@@ -7248,12 +7251,45 @@
       ` : `
         <div class="field"><input id="hh-join-id" placeholder="House name you were given"></div>
         <div class="field" style="margin-top:10px;">
-          <input id="hh-join-pin" inputmode="numeric" maxlength="8" placeholder="PIN"></div>
+          <input id="hh-join-pin" inputmode="numeric" maxlength="8" oninput="this.value=this.value.replace(/\D/g,'')" placeholder="PIN"></div>
         <button style="width:100%;margin-top:18px;" onclick="joinHh()">Join</button>
       `}
       <div id="hh-msg" class="muted" style="font-size:13px;margin-top:14px;"></div>`;
   }
 
+  // v4.17. One rule set for kitchen names and PINs, mirrored in Code.gs createHousehold().
+  // The house name becomes the ID others type to join, so it is restricted to characters
+  // that survive that trip (the backend turns spaces into hyphens and lowercases it).
+  const KITCHEN_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9 -]{1,28}[A-Za-z0-9]$/;
+  const RESERVED_KITCHENS = ['home','default','admin','test'];
+  function kitchenSlug(n){ return String(n||'').trim().toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,''); }
+  function validateKitchen(name, pin, cook){
+    if (!name) return 'Give the house a name first.';
+    if (name.length < 3 || name.length > 30) return 'The house name needs 3 to 30 characters.';
+    if (!KITCHEN_NAME_RE.test(name)) return 'The house name can only have letters, numbers, spaces and hyphens. Remove symbols like _ . @ # or emoji.';
+    if (!/[A-Za-z]/.test(name)) return 'Include at least one letter in the house name.';
+    if (/ {2,}|-{2,}/.test(name)) return 'Remove double spaces or double hyphens from the house name.';
+    if (RESERVED_KITCHENS.indexOf(kitchenSlug(name)) >= 0) return 'That name is reserved. Pick another house name.';
+    if (cook && !/^[A-Za-z][A-Za-z ]{0,29}$/.test(cook)) return "The cook's name can only have letters and spaces.";
+    if (!pin) return 'Choose a PIN.';
+    if (!/^\d+$/.test(pin)) return 'The PIN can only have digits, no letters or symbols.';
+    if (pin.length < 4 || pin.length > 6) return 'The PIN needs 4 to 6 digits.';
+    if (/^(\d)\1+$/.test(pin) || pin === '1234' || pin === '123456' || pin === '4321') return 'That PIN is too easy to guess. Pick something less obvious.';
+    return '';
+  }
+  // Live feedback while typing: strip non-digits from the PIN as they type, and show the
+  // ID that friends will use to join.
+  function hhLive(){
+    const p = document.getElementById('hh-pin');
+    if (p && /\D/.test(p.value)) p.value = p.value.replace(/\D/g, '');
+    const n = document.getElementById('hh-name'), note = document.getElementById('hh-name-note');
+    if (n && note){
+      const v = n.value.trim();
+      note.textContent = (v && KITCHEN_NAME_RE.test(v))
+        ? 'Friends join with the house name "' + kitchenSlug(v) + '".'
+        : '3 to 30 characters. Letters, numbers, spaces and hyphens only (no _ . @ # or emoji).';
+    }
+  }
   function hhMsg(t){ const el = document.getElementById('hh-msg'); if (el) el.textContent = t; }
 
   // Sent back to the join door once, with the reason. Guarded because the 30s poll would
@@ -7272,8 +7308,8 @@
     const name = (document.getElementById('hh-name').value||'').trim();
     const pin  = (document.getElementById('hh-pin').value||'').trim();
     const cook = (document.getElementById('hh-cook').value||'').trim();
-    if (!name){ hhMsg('Give the house a name first.'); return; }
-    if (pin.length < 4){ hhMsg('A PIN needs at least 4 digits.'); return; }
+    const bad = validateKitchen(name, pin, cook);
+    if (bad){ hhMsg(bad); return; }
     hhMsg('Setting up…');
     // No hh exists yet, so this one call deliberately goes out unauthenticated.
     const r = await sheetPost({ action:'createHousehold', name:name, pin:pin,
@@ -7287,9 +7323,7 @@
     // household. Drop it and reload into a clean start rather than patching state in place.
     wipeDeviceCache();
     setHousehold(r.hh, realPin);
-    if (realPin !== pin){
-      try { sessionStorage.setItem('nos_pin_notice', realPin); } catch(e){}
-    }
+    try { sessionStorage.setItem('nos_pin_notice', JSON.stringify({ hh:r.hh, pin:realPin, changed: realPin !== pin })); } catch(e){}
     authShown = false;
     location.reload();
   }
@@ -7302,8 +7336,15 @@
     // Set first, then verify — whoami travels on the ordinary authenticated path,
     // so a wrong PIN fails exactly the way every other request would.
     const prev = [HH, HH_PIN];
+    // v4.16. The backend stores the house name as a slug ("rj_test2" -> "rj-test2"), so the
+    // name someone remembers is not always the ID. Try what was typed, then its slug.
+    const slug = id.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
     setHousehold(id.toLowerCase(), pin);
-    const r = await sheetGet('whoami');
+    let r = await sheetGet('whoami');
+    if (r && /unknown household/i.test(String(r.error || '')) && slug && slug !== id.toLowerCase()){
+      setHousehold(slug, pin);
+      r = await sheetGet('whoami');
+    }
     if (!r || r.error){
       setHousehold(prev[0], prev[1]);
       hhMsg((r && r.error) || "That house name and PIN didn't match.");
@@ -7314,7 +7355,7 @@
     // Joining a DIFFERENT household than the one this phone's cache belongs to: that cache
     // is someone else's kitchen. Drop it and reload into a clean start. (Only after the
     // PIN has been verified above, so a wrong PIN never wipes anything.)
-    if (id.toLowerCase() !== (prev[0] || 'home').toLowerCase()){
+    if (HH.toLowerCase() !== (prev[0] || 'home').toLowerCase()){
       wipeDeviceCache();
       location.reload();
       return;
@@ -7726,7 +7767,9 @@
       const np = sessionStorage.getItem('nos_pin_notice');
       if (np){
         sessionStorage.removeItem('nos_pin_notice');
-        setTimeout(() => toast('Your kitchen PIN is ' + np + '. Write it down: others need it to join.', { ms: 15000 }), 700);
+        let o = null; try { o = JSON.parse(np); } catch(e){}
+        if (!o || typeof o !== 'object') o = { hh:HH, pin:np };
+        setTimeout(() => toast('Friends join with house name "' + o.hh + '" and PIN ' + o.pin + '. Note them down.', { ms: 20000 }), 700);
       }
     } catch(e){}
 
