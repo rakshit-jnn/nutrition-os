@@ -502,6 +502,8 @@
 
     <div class="pad" style="margin-top:12px;">
       <button class="btn-ghost" style="width:100%;" onclick="syncAll()">Sync now</button>
+      <button class="btn-ghost" style="width:100%;margin-top:10px;" id="y-logout" onclick="logoutHousehold()">Log out of this kitchen</button>
+      <div class="tiny" style="text-align:center;margin-top:6px;" id="y-logout-hint">Clears this phone only. Your kitchen's data stays safe; log back in with the house name and PIN.</div>
       <div class="tiny" style="text-align:center;margin-top:10px;" id="y-version"></div>
     </div>
   </section>
@@ -540,7 +542,7 @@
   const VISION_API = '/api/vision';
   const MODEL      = 'claude-sonnet-4-5';
   const SHEET_URL  = 'https://script.google.com/macros/s/AKfycbxXDdY5y_QUVIML1Zb4nwTnuryI_Uqhe-EGwc_iDT_s5OZ9wJNcfWvILo4rCC5bN6XT/exec';
-  const VERSION    = 'v4.12';
+  const VERSION    = 'v4.14';
 
   // ══════════ HOUSEHOLD (v4.0) ══════════
   // Every request now carries which household it belongs to. Stored on the device
@@ -552,6 +554,53 @@
     HH = hh; HH_PIN = pin;
     localStorage.setItem('nos_hh', hh);
     localStorage.setItem('nos_pin', pin);
+  }
+  // v4.13. A phone's cached people, settings and "who am I" belong to ONE household.
+  // Switching to a different one without dropping them is how a brand-new kitchen came up
+  // showing the original household's members: the cache was loaded at boot, survived the
+  // household gate, and onboarding then added the new person on top of it.
+  // A device with no recorded household predates v4.0, so its cache is the default
+  // household's ('home').
+  function deviceHousehold(){ return (HH || 'home').toLowerCase(); }
+  function wipeDeviceCache(){
+    try { ['nos2_members','nos2_active','nos2_settings'].forEach(k => localStorage.removeItem(k)); }
+    catch(e){ console.warn('storage', e); }
+  }
+  let authShown = false;
+  // v4.14. Log out: forget this kitchen on THIS phone (name, PIN, cached people/settings),
+  // then reload into the household gate so the user can join the same or another kitchen.
+  // Nothing is deleted from the Sheet. Two taps (first arms, second confirms) instead of a modal.
+  let logoutArmed = false, logoutTimer = null, loggingOut = false;
+  function logoutHousehold(){
+    const btn = document.getElementById('y-logout');
+    if (!logoutArmed){
+      logoutArmed = true;
+      if (btn) btn.textContent = 'Tap again to log out';
+      clearTimeout(logoutTimer);
+      logoutTimer = setTimeout(() => {
+        logoutArmed = false;
+        const b = document.getElementById('y-logout');
+        if (b) b.textContent = 'Log out of this kitchen';
+      }, 4000);
+      return;
+    }
+    clearTimeout(logoutTimer);
+    logoutArmed = false;
+    loggingOut = true;
+    try {
+      const keys = [];
+      for (let i = 0; i < localStorage.length; i++){
+        const k = localStorage.key(i);
+        if (k && (k.indexOf('nos_') === 0 || k.indexOf('nos2_') === 0)) keys.push(k);
+      }
+      keys.forEach(k => localStorage.removeItem(k));
+    } catch(e){ console.warn('storage', e); }
+    try { sessionStorage.clear(); } catch(e){}
+    HH = ''; HH_PIN = '';
+    try {
+      if (window.caches && caches.keys) caches.keys().then(ks => ks.forEach(k => caches.delete(k))).catch(()=>{});
+    } catch(e){}
+    location.reload();
   }
   function hhQuery(){ return HH ? '&hh=' + encodeURIComponent(HH) + '&pin=' + encodeURIComponent(HH_PIN) : ''; }
   const POLL_MS    = 30000;
@@ -605,6 +654,7 @@
 
   // ══════════ STORAGE ══════════
   function saveLocal(){
+    if (loggingOut) return;
     try {
       localStorage.setItem('nos2_members', JSON.stringify(members));
       localStorage.setItem('nos2_active', activePerson || '');
@@ -829,6 +879,13 @@
       // empty — which looks exactly like data loss. Detect that and use the old
       // path, so shipping in the wrong order degrades to slow, never to blank.
       let all = await sheetGet('getAll');
+      // v4.13. A wrong PIN or unknown household is an ANSWER, not a network failure. It used
+      // to fall through to the 11-GET fallback, every one of which also failed quietly, so
+      // the screen kept showing whatever was cached and nothing said why.
+      if (all && /bad pin|unknown household/i.test(String(all.error || ''))){
+        authFailed(String(all.error));
+        return;
+      }
       if (!all || !all.batch){
         if (!batchWarned){
           batchWarned = true;
@@ -7162,6 +7219,18 @@
 
   function hhMsg(t){ const el = document.getElementById('hh-msg'); if (el) el.textContent = t; }
 
+  // Sent back to the join door once, with the reason. Guarded because the 30s poll would
+  // otherwise re-open it every cycle. Nothing is wiped: the cache may still be right and
+  // the fix may just be a retyped PIN.
+  function authFailed(err){
+    if (authShown) return;
+    authShown = true;
+    hhMode = 'join';
+    startHouseholdGate();
+    hhMsg(/pin/i.test(err) ? "That PIN doesn't match this kitchen. Enter it again."
+                           : "That kitchen wasn't found. Check the house name.");
+  }
+
   async function createHh(){
     const name = (document.getElementById('hh-name').value||'').trim();
     const pin  = (document.getElementById('hh-pin').value||'').trim();
@@ -7173,9 +7242,19 @@
     const r = await sheetPost({ action:'createHousehold', name:name, pin:pin,
                                 household: cook ? { cookName: cook } : {} });
     if (!r || r.error || !r.hh){ hhMsg((r && r.error) || "Couldn't set that up. Try again."); return; }
-    setHousehold(r.hh, pin);
-    document.getElementById('hhgate').classList.add('hidden');
-    startOnboarding();
+    // The PIN the registry actually holds is the one that has to be stored. Older backends
+    // ignore the one typed here and make their own; trusting the typed one meant every
+    // request after this was rejected with "Bad PIN" and nothing ever reached the new kitchen.
+    const realPin = String(r.pin || pin);
+    // A brand-new kitchen starts empty, so whatever this phone remembered belongs to another
+    // household. Drop it and reload into a clean start rather than patching state in place.
+    wipeDeviceCache();
+    setHousehold(r.hh, realPin);
+    if (realPin !== pin){
+      try { sessionStorage.setItem('nos_pin_notice', realPin); } catch(e){}
+    }
+    authShown = false;
+    location.reload();
   }
 
   async function joinHh(){
@@ -7194,6 +7273,15 @@
       return;
     }
     document.getElementById('hhgate').classList.add('hidden');
+    authShown = false;
+    // Joining a DIFFERENT household than the one this phone's cache belongs to: that cache
+    // is someone else's kitchen. Drop it and reload into a clean start. (Only after the
+    // PIN has been verified above, so a wrong PIN never wipes anything.)
+    if (id.toLowerCase() !== (prev[0] || 'home').toLowerCase()){
+      wipeDeviceCache();
+      location.reload();
+      return;
+    }
     // A device that already knows who lives here is a re-install or an upgrade
     // from a pre-v4.0 build, not a new person. Sending it through onboarding
     // would ask a returning household to re-enter everything it already has.
@@ -7436,11 +7524,17 @@
     // The cook's language and the region are household facts, not personal ones —
     // without this they lived only in the first person's onboarding and every
     // later member's cook order came out in the wrong language.
-    await sheetPost({ action:'saveHousehold', person:name, settings:{
+    const saved = await sheetPost({ action:'saveHousehold', person:name, settings:{
       cookLang: onbData.cookLang || 'hi',
       region:   onbData.region || '',
       city:     onbData.city || ''
     }});
+    // v4.13. sheetPost resolves with {error} rather than throwing. Ignoring it is how a
+    // finished onboarding could look fine while nothing had reached the Sheet.
+    if (!saved || saved.error){
+      if (saved && /bad pin|unknown household/i.test(String(saved.error||''))){ authFailed(String(saved.error)); return; }
+      toast("Couldn't save to your kitchen" + (saved && saved.error ? ': ' + saved.error : '. Check your connection.'), { ms: 6000 });
+    }
     await sheetPost({ action:'updateMacros', person:name, calories:cal, protein, carbs, fat, weight });
     await sheetPost({ action:'savePreferences', person:name, diet:members[name].diet,
       likes:members[name].likes, dislikes:members[name].dislikes,
@@ -7588,6 +7682,16 @@
       startHouseholdGate();
       return;
     }
+
+    // v4.13. If the registry's PIN differs from the one typed at the gate (an older backend
+    // makes its own), say so, once, after the reload. Nobody else can join without it.
+    try {
+      const np = sessionStorage.getItem('nos_pin_notice');
+      if (np){
+        sessionStorage.removeItem('nos_pin_notice');
+        setTimeout(() => toast('Your kitchen PIN is ' + np + '. Write it down: others need it to join.', { ms: 15000 }), 700);
+      }
+    } catch(e){}
 
     if (!activePerson || !Object.keys(members).length){
       startOnboarding();
