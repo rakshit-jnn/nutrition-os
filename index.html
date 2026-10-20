@@ -280,7 +280,7 @@
     <div class="pad" style="padding-top:calc(20px + env(safe-area-inset-top));">
       <div class="row" style="align-items:baseline;">
         <span class="muted" id="t-date"></span>
-        <span class="tiny mono" id="t-sync">syncing</span>
+        <span style="display:flex;align-items:center;gap:8px;"><span id="t-avatar"></span><span class="tiny mono" id="t-sync">syncing</span></span>
       </div>
       <div class="row" style="align-items:baseline;margin-top:2px;">
         <span class="eyebrow" id="t-who" style="color:var(--haldi);"></span>
@@ -434,12 +434,6 @@
       </div>
     </div>
 
-    <div class="pad" style="margin-top:12px;">
-      <div class="card">
-        <div class="eyebrow">Dish database</div>
-        <div class="muted" style="margin-top:10px;" id="y-dishcount"></div>
-        <button style="width:100%;margin-top:12px;" onclick="openDishDB()">View & correct macros</button>
-      </div>
     </div>
 
     <div class="pad" style="margin-top:12px;">
@@ -479,18 +473,12 @@
       </div>
     </div>
 
-    <div class="pad" style="margin-top:12px;">
-      <div class="card">
-        <div class="eyebrow">Macro data</div>
-        <p class="muted" style="margin:10px 0;">Ingredient tables, stock cleanup, and recipes — the numbers behind every macro in the app.</p>
-        <button style="width:100%;" onclick="openMacroSetup()">Open setup</button>
-      </div>
     </div>
 
     <div class="pad" style="margin-top:12px;">
       <div class="card">
         <div class="eyebrow">Make this better</div>
-        <p class="muted" style="margin:10px 0;">Something annoying, broken, or missing? Tell me and it gets read.</p>
+        <p class="muted" style="margin:10px 0;">Something annoying, broken, or missing? A dish or ingredient with the wrong numbers? Tell me and it gets read. The food library is kept by us, so suggestions come here.</p>
         <textarea id="y-fb" placeholder="The meal log takes too many taps when…"></textarea>
         <div class="btn-row" style="margin-top:10px;">
           <button onclick="attachFeedbackPhoto()" id="y-fb-photo">Add a screenshot</button>
@@ -503,6 +491,7 @@
     <div class="pad" style="margin-top:12px;">
       <button class="btn-ghost" style="width:100%;" onclick="syncAll()">Sync now</button>
       <button class="btn-ghost" style="width:100%;margin-top:10px;" id="y-logout" onclick="logoutHousehold()">Log out of this kitchen</button>
+      <button class="btn-ghost hidden" style="width:100%;margin-top:6px;" id="y-signout" onclick="signOutGoogle()">Sign out of Google</button>
       <div class="tiny" style="text-align:center;margin-top:6px;" id="y-logout-hint">Clears this phone only. Your kitchen's data stays safe; log back in with the house name and PIN.</div>
       <div class="tiny" style="text-align:center;margin-top:10px;" id="y-version"></div>
     </div>
@@ -542,7 +531,7 @@
   const VISION_API = '/api/vision';
   const MODEL      = 'claude-sonnet-4-5';
   const SHEET_URL  = 'https://script.google.com/macros/s/AKfycbxXDdY5y_QUVIML1Zb4nwTnuryI_Uqhe-EGwc_iDT_s5OZ9wJNcfWvILo4rCC5bN6XT/exec';
-  const VERSION    = 'v4.20';
+  const VERSION    = 'v4.24';
 
   // ══════════ HOUSEHOLD (v4.0) ══════════
   // Every request now carries which household it belongs to. Stored on the device
@@ -566,6 +555,22 @@
     try { ['nos2_members','nos2_active','nos2_settings'].forEach(k => localStorage.removeItem(k)); }
     catch(e){ console.warn('storage', e); }
   }
+  // ══════════ GOOGLE SIGN-IN (v4.24) ══════════
+  // Paste the OAuth *Web* client ID from Google Cloud here to turn sign-in on. Left empty the app
+  // behaves exactly as before (house name + PIN), so shipping this file changes nothing by itself.
+  const GOOGLE_CLIENT_ID = '';
+  const LOGIN_ON = !!GOOGLE_CLIENT_ID;
+  let SESS = localStorage.getItem('nos_sess') || '';
+  let USER = null; try { USER = JSON.parse(localStorage.getItem('nos_user') || 'null'); } catch(e){}
+  let MY_HHS = [], PEOPLE = [], peopleLoaded = false, identityApplied = false, linkPrompted = false;
+  function setSession(sess, user){
+    SESS = sess || ''; USER = user || null;
+    try {
+      if (SESS) { localStorage.setItem('nos_sess', SESS); localStorage.setItem('nos_user', JSON.stringify(USER)); }
+      else { localStorage.removeItem('nos_sess'); localStorage.removeItem('nos_user'); }
+    } catch(e){}
+  }
+  function sessQuery(){ return SESS ? '&sess=' + encodeURIComponent(SESS) : ''; }
   let authShown = false;
   // v4.14. Log out: forget this kitchen on THIS phone (name, PIN, cached people/settings),
   // then reload into the household gate so the user can join the same or another kitchen.
@@ -580,7 +585,7 @@
       logoutTimer = setTimeout(() => {
         logoutArmed = false;
         const b = document.getElementById('y-logout');
-        if (b) b.textContent = 'Log out of this kitchen';
+        if (b) b.textContent = (LOGIN_ON && SESS) ? 'Switch kitchen' : 'Log out of this kitchen';
       }, 4000);
       return;
     }
@@ -593,7 +598,8 @@
         const k = localStorage.key(i);
         if (k && (k.indexOf('nos_') === 0 || k.indexOf('nos2_') === 0)) keys.push(k);
       }
-      keys.forEach(k => localStorage.removeItem(k));
+      // v4.24. With sign-in, "log out of this kitchen" is SWITCHING kitchen: the Google session stays.
+      keys.filter(k => !(LOGIN_ON && (k === 'nos_sess' || k === 'nos_user'))).forEach(k => localStorage.removeItem(k));
     } catch(e){ console.warn('storage', e); }
     try { sessionStorage.clear(); } catch(e){}
     HH = ''; HH_PIN = '';
@@ -602,7 +608,21 @@
     } catch(e){}
     location.reload();
   }
-  function hhQuery(){ return HH ? '&hh=' + encodeURIComponent(HH) + '&pin=' + encodeURIComponent(HH_PIN) : ''; }
+  function signOutGoogle(){
+    try {
+      const keys = [];
+      for (let i = 0; i < localStorage.length; i++){
+        const k = localStorage.key(i);
+        if (k && (k.indexOf('nos_') === 0 || k.indexOf('nos2_') === 0)) keys.push(k);
+      }
+      keys.forEach(k => localStorage.removeItem(k));
+    } catch(e){}
+    try { sessionStorage.clear(); } catch(e){}
+    try { if (window.google && google.accounts && google.accounts.id) google.accounts.id.disableAutoSelect(); } catch(e){}
+    HH = ''; HH_PIN = ''; SESS = ''; USER = null;
+    location.reload();
+  }
+  function hhQuery(){ return (HH ? '&hh=' + encodeURIComponent(HH) + '&pin=' + encodeURIComponent(HH_PIN) : '') + sessQuery(); }
   const POLL_MS    = 30000;
 
   // ══════════ STATE ══════════
@@ -703,6 +723,10 @@
   function toISODate(v){
     if (!v) return '';
     const s = String(v);
+    // v4.21. A full timestamp that crossed the wire as UTC ("…T19:35:00.000Z") is the PREVIOUS
+    // day in IST between midnight and 05:30. Slicing its first ten characters filed a meal
+    // logged at 1am under yesterday, and it vanished from the day bar on the next sync.
+    if (/^\d{4}-\d{2}-\d{2}T.*(Z|[+-]\d{2}:?\d{2})$/.test(s)) return menuDay(s);
     let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);          // 2026-07-30 or ISO
     if (m) return m[1]+'-'+m[2]+'-'+m[3];
     m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);        // 30/7/2026 (en-IN)
@@ -766,7 +790,8 @@
       // Only attach when we actually have one. An empty hh is not "no household"
       // to the backend — it falls through to the DEFAULT spreadsheet, so a
       // half-configured device would quietly write into someone else's kitchen.
-      const payload = HH ? Object.assign({ hh:HH, pin:HH_PIN }, body) : body;
+      let payload = HH ? Object.assign({ hh:HH, pin:HH_PIN }, body) : body;
+      if (SESS) payload = Object.assign({ sess:SESS }, payload);
       const r = await fetch(SHEET_URL, {
         method:'POST',
         body: JSON.stringify(payload),
@@ -882,7 +907,7 @@
       // v4.13. A wrong PIN or unknown household is an ANSWER, not a network failure. It used
       // to fall through to the 11-GET fallback, every one of which also failed quietly, so
       // the screen kept showing whatever was cached and nothing said why.
-      if (all && /bad pin|unknown household/i.test(String(all.error || ''))){
+      if (all && /bad pin|unknown household|session expired|sign in required|not a member/i.test(String(all.error || ''))){
         authFailed(String(all.error));
         return;
       }
@@ -903,6 +928,9 @@
                 getWorkoutLog:wk0, getCookSkills:skl0, getWishlist:wl0,
                 getMenu:mn0, getMealPlans:pl0, getHousehold:hh0,
                 getMeasures:ms0, getCookNext:cn0, getDishCatalog:dc0 };
+      }
+      if (all.getPeople && Array.isArray(all.getPeople.people)){
+        PEOPLE = all.getPeople.people; peopleLoaded = true;
       }
       const inv = all.getInventory, ml = all.getMealLog, mac = all.getMacros,
             prefs = all.getPreferences, wk = all.getWorkoutLog,
@@ -949,7 +977,7 @@
         // as the previous day at IST midnight — which silently empties the whole board.
         menuBoard = mn.menu.map(m => Object.assign({}, m, {
           date: menuDay(m.date), slot: String(m.slot||'').trim().toLowerCase(),
-          qty: m.qty == null ? null : +m.qty, measure: m.measure || '' }));
+          qty: m.qty == null ? null : +m.qty, measure: m.measure || '', note: m.note || '' }));
         menuBackendMissing = false;
       } else if (mn && /unknown action/i.test(String(mn.error||''))){
         menuBackendMissing = true;
@@ -1007,8 +1035,11 @@
           });
         });
 
-      if (inv && inv.items)
-        inventory = inv.items.map(i=>({ name:i.item, qty:i.quantity, updatedBy:i.updatedBy, at:i.lastUpdated }));
+      // v4.22. Not while a kitchen write is in flight: the poll would put the old shelf back for a
+      // moment and the items just added would blink out and in.
+      if (inv && inv.items && !invWriting)
+        inventory = inv.items.map(i=>({ name:i.item, qty:i.quantity, updatedBy:i.updatedBy, at:i.lastUpdated,
+                                        ingId:i.ingId||'', brand:i.brand||'' }));
 
       if (ml && ml.meals)
         mealLog = ml.meals.map(m=>({ dish:m.mealName, date:toISODate(m.date), raw:m.date,
@@ -1836,6 +1867,8 @@
               onclick="toggleChip(this)" data-v="${esc(n)}">${esc(n)}</button>`).join('')}
           </div>
           <div id="am-pt-${di}" style="margin-top:8px;"></div>
+          <input id="am-note-${di}" maxlength="140" autocomplete="off" style="margin-top:8px;"
+            placeholder="Note for the cook (optional) \u2014 e.g. not too spicy" aria-label="Cooking note for ${esc(d.dish)}">
         </div>`).join('')}
       <div class="field">
         <label>Which day</label>
@@ -1929,6 +1962,8 @@
     const date = picked('am-date') || slotDate(slot);
     const items = [];
     dishNames.forEach((dish,di)=>{
+      const noteEl = document.getElementById('am-note-'+di);
+      const noteTxt = ((noteEl && noteEl.value) || '').trim().slice(0, 140);
       const el = document.getElementById('am-'+di);
       const who = el ? [...el.querySelectorAll('.chip.on')].map(c=>c.dataset.v) : [];
       const st = addPortions[di] || { qty:1, measure:'Katori, standard', per:{} };
@@ -1936,7 +1971,7 @@
         // Per-person override if one was set, otherwise the shared portion.
         const pv = st.per[person] || { qty:st.qty, measure:st.measure };
         items.push(Object.assign({ dish:dish, date:date, slot:slot, person:person,
-                                   source:'pick' }, portionPayload(dish, pv)));
+                                   source:'pick', note:noteTxt }, portionPayload(dish, pv)));
       });
     });
     closeSheet();
@@ -2459,13 +2494,16 @@
     addPortions = [{ qty: +first.qty || dp.qty, measure: first.measure || dp.measure,
                      per: mixed?per:{}, open:mixed }];
     openSheet(`
-      <h2>Portion</h2>
+      <h2>Portion &amp; note</h2>
       <p class="muted" style="margin:8px 0 4px;">${esc(dish)} — ${esc(whoLabel(g.for))}</p>
       ${d && d.servingLabel ? `<div class="tiny" style="margin-bottom:14px;color:var(--text3);">
         ${esc(d.servingLabel)}. Changing the amount changes what gets logged.</div>`
       : `<div class="tiny" style="margin-bottom:14px;color:var(--text3);">
         This dish isn't costed yet, so the amount is an instruction to the cook only.</div>`}
       <div id="am-pt-0"></div>
+      <input id="mp-note" maxlength="140" autocomplete="off" style="margin-top:12px;"
+        placeholder="Note for the cook (optional) \u2014 e.g. not too spicy" value="${esc(g.note || '')}"
+        aria-label="Cooking note">
       <button class="btn-primary" style="width:100%;margin-top:14px;"
         onclick="saveMenuPortion()">Save</button>
       <button class="btn-ghost" style="width:100%;margin-top:8px;font-size:13px;"
@@ -2483,6 +2521,8 @@
     // Editing an amount on a dish that has already logged has to rewrite the MealLog
     // row as well, or the Menu would say "2 rotis" while the day bar still counts one.
     const eaten = g.someEaten;
+    const noteEl = document.getElementById('mp-note');
+    const noteVal = noteEl ? noteEl.value.trim().slice(0, 140) : (g.note || '');
     closeSheet();
 
     // One write per distinct amount: a shared portion is a single call, per-person
@@ -2504,13 +2544,13 @@
       if (String(m.dish||'').toLowerCase() !== String(dish).toLowerCase()) return m;
       if (String(m.status||'open') === 'expired') return m;
       const w = writes.find(x=>!x.person || x.person === m.person);
-      return w ? Object.assign({}, m, { qty:w.qty, measure:w.measure }) : m;
+      return w ? Object.assign({}, m, { qty:w.qty, measure:w.measure, note:noteVal }) : m;
     });
     renderMenuBoard(); renderToday();
 
     for (const w of writes){
       const r = await sheetPost({ action:'updateMenuPortion', date, slot, dish,
-        person:w.person, qty:w.qty, measure:w.measure, includeLogged:eaten });
+        person:w.person, qty:w.qty, measure:w.measure, note:noteVal, includeLogged:eaten });
       if (!r || r.error || r.success === false){
         menuBoard = snapshot;
         renderMenuBoard(); renderToday();
@@ -2536,10 +2576,11 @@
     const out = [], idx = {};
     menuRowsFor(date, slot, withEaten).forEach(m => {
       const k = m.dish.trim().toLowerCase();
-      if (idx[k] == null){ idx[k] = out.length; out.push({ dish:m.dish.trim(), for:[], rows:[], portion:'' }); }
+      if (idx[k] == null){ idx[k] = out.length; out.push({ dish:m.dish.trim(), for:[], rows:[], portion:'', note:'' }); }
       const g = out[idx[k]];
       if (!g.for.includes(m.person)) g.for.push(m.person);
       if (!g.portion && m.portion) g.portion = m.portion;
+      if (!g.note && m.note) g.note = String(m.note);
       g.rows.push(m);
     });
     // v4.18. A row's amount is Qty + Measure now (Portion was removed in v4.8), but this
@@ -2606,6 +2647,7 @@
                   onclick="openMenuPortion(${jsAttr(g.dish)})">${
                     g.portion ? esc(g.portion) : 'set portion'}</button>
             </div>
+            ${g.note ? `<div class="tiny" style="margin-top:3px;color:var(--haldi);">\u201c${esc(g.note)}\u201d</div>` : ''}
           </div>
           <span style="display:flex;align-items:center;gap:8px;flex:0 0 auto;">
             ${eaten ? '' : (mine
@@ -2822,7 +2864,7 @@
   }
 
   function menuAsDishes(){
-    return menuGrouped(menuDate(), menuSlot()).map(g => ({ dish:g.dish, for:g.for, portion:g.portion }));
+    return menuGrouped(menuDate(), menuSlot()).map(g => ({ dish:g.dish, for:g.for, portion:g.portion, note:g.note || '' }));
   }
   function tellCookFromMenu(){
     const d = menuAsDishes();
@@ -3258,8 +3300,7 @@
           ${t.fibUnknown ? `Fibre not estimated for ${t.fibUnknown} dish${t.fibUnknown>1?'es':''}.` : ''}
         </div>
         <div class="tiny" style="margin-top:6px;color:var(--text3);">
-          These are estimates, not measurements — correct any dish in You &rsaquo; Dish database
-          and it stops being a guess.</div>
+          These are estimates, not measurements. Spot a wrong number? Tell us in You &rsaquo; Make this better.</div>
       </div>`;
     const label = (i)=>{
       const date = addDays(p.startDate || today(), i);
@@ -3794,6 +3835,74 @@
         class="mono" style="color:var(--text3);">/${target}</span></span>`;
   }
 
+  // ── The day behind the bar (v4.21) ─────────────────────────────────────────
+  // Tap the calorie card: every meal logged for the active person on one day, with its own
+  // macros, and arrows back through the last week.
+  const DAYLOG_BACK = 7;
+  let dayLogOffset = 0;
+  const SLOT_ORDER = { breakfast:0, lunch:1, snack:2, dinner:3 };
+  function dayLogTitle(d){
+    if (d === today()) return 'Today';
+    if (d === yesterday()) return 'Yesterday';
+    const [y,m,dd] = d.split('-').map(Number);
+    return new Intl.DateTimeFormat('en-IN',{weekday:'short',day:'numeric',month:'short',timeZone:'UTC'})
+      .format(new Date(Date.UTC(y, m-1, dd)));
+  }
+  function mealsOn(d){
+    return allMeals().filter(m => m.date === d && m.by === activePerson)
+      .map((m, i) => ({ m, i }))
+      .sort((a, b) => {
+        const sa = SLOT_ORDER[String(a.m.type||'').toLowerCase()], sb = SLOT_ORDER[String(b.m.type||'').toLowerCase()];
+        return ((sa == null ? 9 : sa) - (sb == null ? 9 : sb)) || (a.i - b.i);
+      }).map(x => x.m);
+  }
+  function openDayLog(offset){
+    dayLogOffset = Math.max(-DAYLOG_BACK, Math.min(0, offset || 0));
+    const d = addDays(today(), dayLogOffset);
+    const t = me();
+    const meals = mealsOn(d);
+    let kcal = 0, p = 0, c = 0, f = 0, fib = 0, fibN = 0, unc = 0;
+    const rows = meals.map((m, i) => {
+      const mm = macrosFor(m.dish, m.qty || 1, m.measure || '');
+      const amt = (m.qty && m.measure) ? portionLabel(m.qty, m.measure) : '';
+      let right;
+      if (mm){
+        kcal += mm.kcal||0; p += mm.p||0; c += mm.c||0; f += mm.f||0;
+        if (mm.fib != null){ fib += mm.fib; fibN++; }
+        right = `<div class="mono" style="font-size:14px;font-weight:600;">${Math.round(mm.kcal||0)} <span style="font-size:11px;font-weight:400;color:var(--text3);">kcal</span></div>
+          <div class="tiny mono" style="margin-top:2px;">P ${Math.round(mm.p||0)} \u00b7 C ${Math.round(mm.c||0)} \u00b7 F ${Math.round(mm.f||0)}${mm.fib != null ? ' \u00b7 Fib ' + Math.round(mm.fib) : ''}</div>`;
+      } else {
+        unc++;
+        right = `<div class="tiny" style="color:var(--haldi);">not counted yet</div>`;
+      }
+      return `<div style="display:flex;justify-content:space-between;gap:12px;padding:10px 0;${i<meals.length-1?'border-bottom:0.5px solid var(--border);':''}">
+        <div style="min-width:0;">
+          <div style="font-weight:500;">${esc(m.dish)}</div>
+          <div class="tiny" style="margin-top:2px;color:var(--text2);">${esc(cap(String(m.type||'meal')))}${amt ? ' \u00b7 ' + esc(amt) : ''}</div>
+        </div>
+        <div style="text-align:right;flex:0 0 auto;">${right}</div>
+      </div>`;
+    }).join('');
+    const canBack = dayLogOffset > -DAYLOG_BACK, canFwd = dayLogOffset < 0;
+    const arrow = (dir, ok, label) => `<button class="btn-ghost" style="padding:6px 14px;min-height:0;font-size:18px;${ok?'':'opacity:0.25;'}"
+        ${ok ? `onclick="openDayLog(${dayLogOffset + dir})"` : 'disabled'} aria-label="${label}">${dir < 0 ? '\u2039' : '\u203a'}</button>`;
+    openSheet(`
+      <div class="row" style="align-items:center;">
+        ${arrow(-1, canBack, 'Previous day')}
+        <div style="text-align:center;"><h2 style="margin:0;">${esc(dayLogTitle(d))}</h2>
+          <div class="tiny">${esc(activePerson || '')}</div></div>
+        ${arrow(1, canFwd, 'Next day')}
+      </div>
+      ${meals.length ? `<div style="margin-top:12px;">${rows}</div>
+        <div class="divider"></div>
+        <div class="row"><span style="font-weight:600;">Total</span>
+          <span class="mono" style="font-weight:600;">${Math.round(kcal).toLocaleString('en-IN')}${t.cal ? ' / ' + t.cal.toLocaleString('en-IN') : ''} kcal</span></div>
+        <div class="tiny mono" style="margin-top:4px;text-align:right;">P ${Math.round(p)}${t.protein ? '/' + t.protein : ''} \u00b7 C ${Math.round(c)}${t.carbs ? '/' + t.carbs : ''} \u00b7 F ${Math.round(f)}${t.fat ? '/' + t.fat : ''}${fibN ? ' \u00b7 Fib ' + Math.round(fib) : ''}</div>
+        ${unc ? `<div class="tiny" style="margin-top:8px;color:var(--haldi);">${unc} ${unc===1?'dish isn\u2019t':'dishes aren\u2019t'} counted \u2014 not in the dish list yet.</div>` : ''}`
+      : `<div class="muted" style="margin:22px 0;text-align:center;">Nothing logged ${d === today() ? 'yet today' : 'on this day'}.</div>`}
+      <button class="btn-ghost" style="width:100%;margin-top:14px;" onclick="closeSheet()">Close</button>`);
+  }
+
   function renderMacroCard(t, got){
     const box = document.getElementById('t-macros');
     if (!box) return;
@@ -3806,13 +3915,20 @@
     const pct  = Math.min(100, Math.round(got.kcal / (t.cal || 1) * 100));
     const over = got.kcal > (t.cal || 0);
 
+    // v4.21. The whole card opens the day's meal list.
+    box.style.cursor = 'pointer';
+    box.setAttribute('role', 'button'); box.setAttribute('tabindex', '0');
+    box.setAttribute('aria-label', 'See the meals behind these numbers');
+    box.onclick = () => openDayLog(0);
+    box.onkeydown = e => { if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); openDayLog(0); } };
+
     box.innerHTML = `
       <div class="row" style="align-items:baseline;">
         <span style="display:flex;align-items:baseline;gap:6px;">
           <span class="display" style="font-size:22px;font-weight:600;line-height:1;">${got.kcal.toLocaleString('en-IN')}</span>
           <span class="mono" style="font-size:11px;color:var(--text3);">/ ${(t.cal||0).toLocaleString('en-IN')} kcal</span>
         </span>
-        <span class="eyebrow">${got.count ? got.count + (got.count===1?' meal':' meals') : 'nothing yet'}</span>
+        <span class="eyebrow">${got.count ? got.count + (got.count===1?' meal':' meals') : 'nothing yet'} \u203a</span>
       </div>
       <div class="macro-track" style="margin-top:7px;"><div class="macro-fill"
         style="width:${pct}%;background:${over?'var(--mirch)':'var(--haldi)'};"></div></div>
@@ -4026,6 +4142,7 @@
         // v4.9. Braces restored. Without them only logEv sat inside the loop, so
         // `person` was out of scope at sheetPost: the meal was never saved.
         const receipts = [];
+        const failed = [];
         for (const person of who){
           logEv('dish_logged', dish);
           const r = await sheetPost({ action:'logMeal', mealName:dish, mealType:type, loggedBy:person,
@@ -4033,9 +4150,20 @@
                             qty:portions[person].qty, measure:portions[person].measure,
                             deduct: opts.deduct !== false,
                             closeMenuRow:true, menuDate:today() });
-          if (r && r.deduction) receipts.push(r.deduction);
+          // v4.21. sheetPost RESOLVES with {error}; it never throws. An unchecked failure left the
+          // meal on screen for a few minutes and then it silently vanished on the next sync.
+          if (!r || r.error || r.success === false){
+            failed.push(person);
+            pendingMeals = pendingMeals.filter(m => !(m.dish === dish && m.by === person && added.indexOf(m) > -1));
+            continue;
+          }
+          if (r.deduction) receipts.push(r.deduction);
         }
-        announceStock(dish, receipts);
+        if (failed.length){
+          renderToday();
+          toast("Couldn't save " + dish + (who.length > 1 ? ' for ' + failed.join(', ') : '') + ' \u2014 not logged. Try again.', { ms: 6000 });
+        }
+        if (failed.length < who.length) announceStock(dish, receipts);
         syncAll(true);
       })();
     });
@@ -4186,13 +4314,13 @@
   const RES_NOISE = /\b\d+(\.\d+)?\s*(kg|g|gm|gms|gram|grams|ml|l|ltr|litre|liter|pcs|pc|piece|pieces|pack|packet|no|nos)\b/g;
   const RES_FILLER = /\b(pack of|combo|value|family|fresh|premium|select|classic|regular|original|natural|pure|farm)\b/g;
 
-  function resolveIng(text){
+  function resolveIng(text, pool){
     const raw = String(text||'').toLowerCase();
     if (!raw.trim()) return null;
     const t = raw.replace(RES_NOISE,' ').replace(RES_FILLER,' ')
                  .replace(/[^a-z\s]/g,' ').replace(/\s+/g,' ').trim();
     if (!t) return null;
-    const common = ingredients.filter(i => i.common === 'yes');
+    const common = pool || ingredients.filter(i => i.common === 'yes');
     if (!common.length) return null;
     const namesOf = i => [i.name].concat(i.aliases || []);
     const esc2 = s => s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
@@ -4252,6 +4380,111 @@
     return { text: out.join('\n'), changes };
   }
 
+  // ══════════ MISSING INGREDIENTS (v4.21) ══════════
+  // For a suggested dish: what would one basic portion for the whole house need, and what of
+  // that is not on the shelf (or not enough of it)? Library dishes only: a dish with no
+  // ingredient rows gets no label rather than a guess. Spices, oils and salt are left out
+  // on purpose: how much goes in is personal, and counting them would flag every dish.
+  // A shelf item whose unit can't be turned into grams ("2 packs") is treated as unknown,
+  // never as missing, so the label does not cry wolf.
+  let dishIngs = {}, dishIngsLoaded = false, missOpen = -1;
+  const MISS_SKIP_GROUP = /spice|condiment|oil|fat/i;
+  const MISS_MIN_G = 5;
+  const STOCK_UNITS = { kg:'kg', kgs:'kg', g:'g', gm:'g', gms:'g', gram:'g', grams:'g',
+    ml:'ml', l:'l', ltr:'l', ltrs:'l', litre:'l', litres:'l', liter:'l', liters:'l',
+    pcs:'pcs', pc:'pcs', piece:'pcs', pieces:'pcs', no:'pcs', nos:'pcs',
+    dozen:'dozen', doz:'dozen', pack:'pack', packs:'pack', packet:'pack', packets:'pack' };
+
+  async function loadDishIngredients(force){
+    if (dishIngsLoaded && !force) return;
+    const r = await sheetGet('getDishIngredients');
+    if (!r || r.error || !Array.isArray(r.rows)) return;   // older backend: no labels, nothing breaks
+    dishIngs = {};
+    r.rows.forEach(x => { (dishIngs[x.dishId] = dishIngs[x.dishId] || []).push(x); });
+    dishIngsLoaded = true;
+    renderMenu();
+  }
+  function parseStock(raw){
+    const t = String(raw == null ? '' : raw).trim().toLowerCase();
+    const m = t.match(/^(\d+(?:\.\d+)?|\.\d+)\s*([a-z]*)$/);
+    if (!m) return null;
+    const unit = m[2] ? (STOCK_UNITS[m[2]] || '') : '';
+    const v = parseFloat(m[1]);
+    return unit === 'dozen' ? { value:v*12, unit:'pcs' } : { value:v, unit };
+  }
+  function stockGrams(q, ing){
+    if (!q) return null;
+    if (q.unit === 'g') return q.value;
+    if (q.unit === 'kg') return q.value * 1000;
+    if (q.unit === 'ml' || q.unit === 'l') return ing && ing.density > 0 ? (q.unit === 'l' ? q.value*1000 : q.value) * ing.density : null;
+    if (q.unit === 'pcs') return ing && ing.pieceGrams > 0 ? q.value * ing.pieceGrams : null;
+    return null;
+  }
+  function fmtNeed(g, up){
+    const r = up ? (g < 100 ? Math.ceil(g/10)*10 : Math.ceil(g/50)*50) : Math.round(g);
+    return r >= 1000 ? (Math.round(r/100)/10) + ' kg' : r + ' g';
+  }
+  // null = no honest answer (show nothing). Otherwise { people, items:[{name, perPortion, need, have, order, state}] }.
+  function missingFor(dish){
+    if (!dishIngsLoaded || !ingredients.length) return null;
+    const d = dishFor(dish);
+    if (!d || !d.dishId || !(d.yieldGrams > 0)) return null;
+    const rows = dishIngs[d.dishId];
+    if (!rows || !rows.length) return null;
+    const grams = gramsFor(dish, 1, isCountedDish(dish) ? 'Piece' : 'Katori, standard');
+    if (!(grams > 0)) return null;
+    const frac = grams / d.yieldGrams;
+    const people = Math.max(1, Object.keys(members).length);
+    const per = {};
+    rows.forEach(r => { per[r.ingId] = (per[r.ingId] || 0) + r.g * frac; });
+    const pool = [];
+    Object.keys(per).forEach(id => {
+      const ing = ingIndex[id];
+      if (ing) pool.push(Object.assign({}, ing, { common:'yes' }));
+    });
+    const have = {}, unknown = {};
+    inventory.forEach(it => {
+      const res = it.ingId ? (per[it.ingId] != null ? { ing:ingIndex[it.ingId], confidence:'exact' } : null)
+                           : resolveIng(it.name, pool);
+      if (!res || !res.ing || res.confidence === 'none') return;
+      const id = res.ing.id;
+      const g = stockGrams(parseStock(it.qty), res.ing);
+      if (g == null) unknown[id] = true; else have[id] = (have[id] || 0) + g;
+    });
+    const items = [];
+    Object.keys(per).forEach(id => {
+      const ing = ingIndex[id];
+      if (!ing || MISS_SKIP_GROUP.test(String(ing.group || ''))) return;
+      if (String(ing.name).toLowerCase() === 'water') return;
+      const need = per[id] * people;
+      if (need < MISS_MIN_G) return;
+      const got = have[id] || 0;
+      if (got >= need) return;
+      if (unknown[id] && !got) return;           // on the shelf, just not measurable
+      items.push({ name: cap(String(ing.name)), perPortion: per[id], need, have: got,
+                   order: need - got, state: got > 0 ? 'low' : 'missing' });
+    });
+    items.sort((a, b) => b.order - a.order);
+    return items.length ? { people, items } : { people, items:[] };
+  }
+  function toggleMiss(i){ missOpen = (missOpen === i) ? -1 : i; renderMenu(); }
+  function missingMarkup(m, i){
+    const ms = missingFor(m.dish);
+    if (!ms || !ms.items.length) return '';
+    const open = missOpen === i;
+    const label = `<div style="margin-top:6px;"><button class="btn-ghost" style="padding:2px 9px;min-height:0;font-size:11px;
+        color:var(--mirch);border:0.5px solid var(--mirch);border-radius:99px;"
+        onclick="event.stopPropagation();toggleMiss(${i})" aria-expanded="${open}">few ingredients missing ${open ? '\u25be' : '\u25b8'}</button></div>`;
+    if (!open) return label;
+    return label + `<div style="margin-top:8px;padding:10px;background:var(--surface2);border-radius:8px;" onclick="event.stopPropagation()">
+        <div class="tiny" style="margin-bottom:6px;">One basic portion each for ${ms.people} ${ms.people===1?'person':'people'}. Spices, oil and salt not counted.</div>
+        ${ms.items.map(x => `<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0;font-size:13px;">
+          <span>${esc(x.name)}<span class="tiny" style="color:var(--text3);"> \u00b7 ${fmtNeed(x.perPortion)} a portion</span></span>
+          <span class="mono" style="color:var(--mirch);text-align:right;">${x.have > 0 ? 'have ' + fmtNeed(x.have) + ', ' : ''}order \u2265 ${fmtNeed(x.order, true)}</span>
+        </div>`).join('')}
+      </div>`;
+  }
+
   // ══════════ MACRO SETUP (v3.8) ══════════
   // A one-time-ish maintenance screen, deliberately not a tab: seeding the
   // ingredient tables, merging the duplicated inventory rows, and drafting the
@@ -4266,6 +4499,7 @@
     ingredients = (r && r.ingredients) || [];
     ingIndex = {};
     ingredients.forEach(i => { ingIndex[i.id] = i; });
+    try { renderKitchen(); } catch(e){}     // groups come from here; paint them once they exist
     return ingredients;
   }
 
@@ -4610,42 +4844,7 @@
   }
 
   // ══════════ KITCHEN ══════════
-  const CATEGORIES = {
-    'Vegetables':['spinach','palak','tomato','onion','potato','aloo','broccoli','cauliflower','gobi','carrot','gajar','capsicum','beans','peas','matar','cucumber','lauki','bhindi','okra','brinjal','baingan','cabbage','methi','coriander','dhania','mint','pudina','ginger','adrak','garlic','lehsun','chilli','mirch','mushroom','beetroot','mooli','karela'],
-    'Fruits':['banana','apple','orange','mango','grapes','papaya','watermelon','pomegranate','anar','guava','pineapple','kiwi','pear','lemon','nimbu','coconut','nariyal','dates','khajur','avocado'],
-    'Proteins':['egg','anda','chicken','murga','mutton','fish','machli','prawn','soya','soy','chana','chickpea','rajma','dal','lentil','masoor','moong','toor','urad','chole','sprouts','paneer','tofu'],
-    'Dairy & bread':['milk','doodh','curd','dahi','yogurt','cheese','butter','makhan','ghee','cream','malai','roti','bread','atta','maida','naan','pav','lassi','chaas'],
-    'Grains':['rice','chawal','oats','poha','quinoa','pasta','noodle','vermicelli','daliya','bajra','jowar','ragi','sabudana','muesli'],
-    'Supplements':['whey','protein powder','creatine','bcaa','vitamin','omega','multivitamin','collagen','isabgol'],
-    'Oils & condiments':['oil','tel','olive','mustard','sarson','ketchup','sauce','vinegar','mayo','honey','jam','pickle','achar','chutney','peanut butter'],
-    'Beverages':['water','soda','juice','tea','chai','coffee','energy drink','coconut water'],
-    'Spices':['salt','namak','sugar','cheeni','turmeric','haldi','cumin','jeera','garam masala','pepper','kali mirch','cardamom','elaichi','cinnamon','dalchini','clove','laung','tej patta','hing','saunf','ajwain','masala','baking soda']
-  };
-  const CAT_ORDER = ['Proteins','Vegetables','Dairy & bread','Grains','Fruits','Spices','Oils & condiments','Beverages','Supplements','Other'];
-  // A category was an all-caps grey rule that read as a label on the row below it,
-  // not as a heading over a group. An icon and a colour make it scannable — the
-  // kitchen is the one screen read while standing up and in a hurry. Colours reuse
-  // the existing spice palette rather than introducing new ones.
-  const CAT_STYLE = {
-    'Proteins':          { icon:'🥚', c:'var(--mirch)'  },
-    'Vegetables':        { icon:'🥬', c:'var(--dhania)' },
-    'Dairy & bread':     { icon:'🥛', c:'var(--haldi)'  },
-    'Grains':            { icon:'🌾', c:'var(--haldi)'  },
-    'Fruits':            { icon:'🍎', c:'var(--mirch)'  },
-    'Spices':            { icon:'🌶️', c:'var(--mirch)'  },
-    'Oils & condiments': { icon:'🫙', c:'var(--haldi)'  },
-    'Beverages':         { icon:'🫖', c:'var(--dhania)' },
-    'Supplements':       { icon:'💊', c:'var(--dhania)' },
-    'Other':             { icon:'📦', c:'var(--text3)'  }
-  };
-  function catStyle(c){ return CAT_STYLE[c] || CAT_STYLE['Other']; }
-  function categorize(name){
-    const n = (name||'').toLowerCase();
-    for (const [cat, words] of Object.entries(CATEGORIES))
-      if (words.some(w=>n.includes(w))) return cat;
-    return 'Other';
-  }
-
+  // v4.22. The old keyword CATEGORIES / categorize() are gone: groups come from the ingredient library.
   // "Low" is inferred from the quantity string. Crude but it never needs configuring,
   // and a wrong guess costs nothing more than an extra line on the shopping list.
   // Staples get eaten in bulk, so 400 g of atta is nearly out while 400 g of
@@ -4660,16 +4859,45 @@
     'Oils & condiments':{ bulk:0.3, small:200 },
     'Beverages':       { bulk:1,   small:500  }
   };
-  function isLow(qty, name){
+  // v4.22. Groups come from the shared ingredient library now (the item's IngID), not from a
+  // keyword list: that list put atta under Dairy & bread. An item not yet matched to the
+  // library sits in 'Not matched yet' until it is.
+  const UNMATCHED = 'Not matched yet';
+  function invIng(i){ return (i && i.ingId && ingIndex[i.ingId]) || null; }
+  function invTitle(i){ const g = invIng(i); return g ? cap(String(g.name)) : i.name; }
+  function invGroupOf(i){ const g = invIng(i); return (g && g.group) ? String(g.group) : UNMATCHED; }
+  function groupStyle(g){
+    const t = String(g).toLowerCase();
+    if (/cereal|millet/.test(t))               return { icon:'🌾', c:'var(--haldi)' };
+    if (/milk/.test(t))                        return { icon:'🥛', c:'var(--haldi)' };
+    if (/vegetable|leafy|root|tuber/.test(t))  return { icon:'🥬', c:'var(--dhania)' };
+    if (/fruit/.test(t))                       return { icon:'🍎', c:'var(--mirch)' };
+    if (/spice|condiment/.test(t))             return { icon:'🌶️', c:'var(--mirch)' };
+    if (/oil|fat/.test(t))                     return { icon:'🫙', c:'var(--haldi)' };
+    if (/legume|pulse/.test(t))                return { icon:'🫘', c:'var(--haldi)' };
+    if (/fish|shellfish|meat|egg|poultry/.test(t)) return { icon:'🥚', c:'var(--mirch)' };
+    if (/nut|seed/.test(t))                    return { icon:'🥜', c:'var(--haldi)' };
+    if (/sugar|sweet/.test(t))                 return { icon:'🍬', c:'var(--mirch)' };
+    return { icon:'📦', c:'var(--text3)' };
+  }
+  function lowLimitFor(item){
+    const g = invGroupOf(item).toLowerCase();
+    if (/cereal|millet|legume|pulse/.test(g)) return { bulk:1,   small:1000 };
+    if (/milk|egg/.test(g))                   return { bulk:1,   small:500  };
+    if (/spice|condiment/.test(g))            return { bulk:0.1, small:50   };
+    if (/oil|fat/.test(g))                    return { bulk:0.3, small:200  };
+    return { bulk:0.5, small:250 };
+  }
+  function isLow(qty, item){
     const s = String(qty||'').toLowerCase();
-    const lim = LOW_LIMITS[categorize(name)] || { bulk:0.5, small:250 };
+    const lim = lowLimitFor(item);
     const n = parseFloat(s);
     if (isNaN(n)) return /last|khatam|finish|over|empty|thoda/.test(s);
     if (/\bkg\b|\bl\b|\blitre|\bliter/.test(s)) return n <= lim.bulk;
     if (/\bg\b|\bml\b/.test(s)) return n <= lim.small;
     return n <= 2;
   }
-  function lowStock(){ return inventory.filter(i=>isLow(i.qty, i.name)); }
+  function lowStock(){ return inventory.filter(i=>isLow(i.qty, i)); }
 
   function renderKitchen(){
     const low = lowStock();
@@ -4680,13 +4908,15 @@
     document.getElementById('k-low').innerHTML = low.length
       ? `<div class="card">` + low.map(i=>
           `<div class="row" style="padding:8px 0;">
-            <div><div>${esc(i.name)}</div><div class="tiny">${esc(categorize(i.name))}</div></div>
+            <div><div>${esc(invTitle(i))}</div><div class="tiny">${esc(i.brand || invGroupOf(i))}</div></div>
             <span class="mono" style="color:var(--mirch);font-size:13px;">${esc(i.qty)}</span>
           </div>`).join('') + `</div>`
       : `<div class="card"><div class="muted">Nothing running low.</div></div>`;
 
     const groups = {};
-    inventory.forEach(i=>{ const c = categorize(i.name); (groups[c]=groups[c]||[]).push(i); });
+    inventory.forEach(i=>{ const c = invGroupOf(i); (groups[c]=groups[c]||[]).push(i); });
+    const groupOrder = Object.keys(groups).sort((a, b) =>
+      (a === UNMATCHED) - (b === UNMATCHED) || a.localeCompare(b));
     const list = document.getElementById('k-list');
     if (!inventory.length){
       list.innerHTML = `<div class="card"><div class="muted">Kitchen's empty. Add what you have above — speak it, type it, or use a photo: snap the shelf, or upload a picture or an order screenshot from your gallery.</div></div>`;
@@ -4695,8 +4925,8 @@
     // Grouped, but flat inside the one card — nested cards per category was the
     // thing that made this screen feel busy. The category is an eyebrow rule, the
     // quantity is the only coloured element, and low stock is the only colour.
-    list.innerHTML = CAT_ORDER.filter(c=>groups[c]).map((c,ci)=>{
-      const st = catStyle(c);
+    list.innerHTML = groupOrder.map((c,ci)=>{
+      const st = groupStyle(c);
       return `<div style="margin-top:${ci?20:14}px;">
         <div style="display:flex;align-items:center;gap:8px;padding-bottom:8px;
           border-bottom:1.5px solid ${st.c};">
@@ -4706,9 +4936,10 @@
           <span class="mono" style="margin-left:auto;font-size:12px;color:var(--text3);">${groups[c].length}</span>
         </div>` +
         groups[c].map(i=>{
-          const low = isLow(i.qty, i.name);
+          const low = isLow(i.qty, i);
           return `<div class="row" style="padding:10px 0;border-bottom:0.5px solid var(--border);">
-            <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(i.name)}</span>
+            <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(invTitle(i))}${
+              i.brand ? `<span class="tiny" style="display:block;color:var(--text3);">${esc(i.brand)}</span>` : ''}</span>
             <span style="display:flex;align-items:center;gap:12px;flex:0 0 auto;">
               <span class="mono" style="font-size:13px;color:${low?'var(--mirch)':'var(--text2)'}">${esc(i.qty)}</span>
               <button class="btn-ghost" style="padding:2px 4px;min-height:0;font-size:15px;color:var(--text3);"
@@ -4778,25 +5009,259 @@
     // "amul dahi" typed by hand fragments the inventory exactly as badly as
     // "Amul Masti Dahi 400 g" read off a screenshot. Canonicalising at the single
     // choke point means every entry path is covered by one piece of code.
-    await loadIngredients();
-    const canon = lines.map(canonLine);
-
-    const parsed = canon.map(l=>{
-      const m = l.match(/^(.*?)[\s\-–:]*([\d.]+\s*(?:kg|g|l|ml|pcs?|pieces?|packs?|dozen)?)\s*$/i);
-      if (m && m[1].trim()) return { name:m[1].trim(), qty:m[2].trim() };
-      const m2 = l.match(/^([\d.]+\s*(?:kg|g|l|ml|pcs?|pieces?|packs?|dozen)?)\s+(.*)$/i);
-      if (m2) return { name:m2[2].trim(), qty:m2[1].trim() };
-      return { name:l, qty:'1' };
-    });
-
-    for (const p of parsed)
-      await sheetPost({ action:'addInventoryItem', item:p.name, quantity:p.qty, updatedBy:activePerson });
-
+    // v4.22. Instant: the shelf updates on screen at once and ONE request saves the lot. This used
+    // to post every line separately, wait for each, then re-download everything.
+    const w = await writeKitchenLines(lines);
     box.value = '';
     status.textContent = '';
-    toast(parsed.length + ' item' + (parsed.length>1?'s':'') + ' updated');
-    await syncAll(true);
+    toast(w.count + ' item' + (w.count>1?'s':'') + ' added');
+  }
+
+  function parseKitchenLine(l){
+    const m = l.match(/^(.*?)[\s\-–:]*([\d.]+\s*(?:kg|g|l|ml|pcs?|pieces?|packs?|dozen)?)\s*$/i);
+    if (m && m[1].trim()) return { name:m[1].trim(), qty:m[2].trim() };
+    const m2 = l.match(/^([\d.]+\s*(?:kg|g|l|ml|pcs?|pieces?|packs?|dozen)?)\s+(.*)$/i);
+    if (m2) return { name:m2[2].trim(), qty:m2[1].trim() };
+    return { name:l, qty:'1' };
+  }
+
+  // ── Kitchen items join the shared ingredient library (v4.22) ───────────────────────────────
+  // Same shape as dishes. A shelf item is matched to a library ingredient; the row keeps what was
+  // typed ("Rage Coffee Original Freeze Dried Instant Coffee") and gains the link (IngID) plus the
+  // brand split off it. Deduction follows the link, so a dish that uses "instant coffee" takes it
+  // off whichever brand is on the shelf (the one with the most first; ties alphabetical).
+  //   exact name/alias   -> linked silently
+  //   something close    -> the PERSON is asked; Yes saves a shared alias
+  //   nothing close      -> one Claude call proposes the ingredient, validated, added as 'estimated'
+  let invWriting = 0, invQueue = [], invBusy = false, invSeen = {};
+  let invAutoAsks = 0, invAutoNew = 0;
+  const INV_AUTO_ASK_MAX = 5, INV_AUTO_NEW_MAX = 3;
+
+  function invClean(text){
+    return String(text||'').toLowerCase().replace(RES_NOISE,' ').replace(RES_FILLER,' ')
+      .replace(/[^a-z\s]/g,' ').replace(/\s+/g,' ').trim();
+  }
+  // Brand = what is left of the typed name once the ingredient's own words are taken out (the LAST
+  // occurrence, since brands come first: "Rage Coffee … Instant Coffee"). At most two words.
+  function invBrandOf(text, ing){
+    const toks = invClean(text).split(' ').filter(Boolean);
+    if (!toks.length || !ing) return '';
+    // The ingredient's own NAME is tried first, then its aliases (longest first). A saved brand alias
+    // ("rage coffee freeze dried instant coffee") must not swallow the brand it was created from.
+    const phrases = [invClean(ing.name)].concat((ing.aliases || []).map(x => invClean(x))
+      .sort((a, b) => b.length - a.length)).filter(Boolean);
+    let removed = false;
+    for (const ph of phrases){
+      if (removed) break;
+      const pt = ph.split(' ');
+      for (let i = toks.length - pt.length; i >= 0; i--){
+        if (pt.every((w, k) => toks[i + k] === w)){ toks.splice(i, pt.length); removed = true; break; }
+      }
+    }
+    return toks.slice(0, 2).map(cap).join(' ');
+  }
+  function prepareInvItem(p){
+    const r = resolveIng(p.name);
+    if (r && r.ing && r.confidence === 'exact')
+      return { name:p.name, qty:p.qty, ingId:r.ing.id, brand:invBrandOf(p.name, r.ing) };
+    return { name:p.name, qty:p.qty, ingId:'', brand:'' };
+  }
+  // Up to three library ingredients that could be what the person means.
+  function ingCandidates(text){
+    const toks = invClean(text).split(' ').filter(Boolean);
+    if (!toks.length) return [];
+    const out = [], seen = {};
+    const r = resolveIng(text);
+    if (r && r.ing){ out.push(r.ing); seen[r.ing.id] = 1; }
+    const scored = [];
+    ingredients.forEach(i => {
+      if (i.common !== 'yes' || seen[i.id]) return;
+      const words = [i.name].concat(i.aliases || []).join(' ').toLowerCase().split(/[^a-z]+/).filter(w => w.length >= 4);
+      const hit = words.filter(w => toks.indexOf(w) > -1).length;
+      if (hit) scored.push({ i, hit, len: String(i.name).length });
+    });
+    scored.sort((a, b) => b.hit - a.hit || a.len - b.len);
+    scored.slice(0, 3 - out.length).forEach(x => out.push(x.i));
+    return out.slice(0, 3);
+  }
+
+  async function writeKitchenLines(lines){
+    await loadIngredients();
+    const prepared = lines.map(parseKitchenLine).map(prepareInvItem);
+    const snapshot = inventory.map(i => Object.assign({}, i));
+    prepared.forEach(p => {
+      const k = p.name.toLowerCase();
+      const ex = inventory.find(i => i.name.toLowerCase() === k);
+      if (ex){ ex.qty = p.qty; ex.updatedBy = activePerson; if (p.ingId){ ex.ingId = p.ingId; ex.brand = p.brand; } }
+      else inventory.push({ name:p.name, qty:p.qty, updatedBy:activePerson, at:'', ingId:p.ingId, brand:p.brand });
+    });
     renderKitchen();
+    invWriting++;
+    const done = (async () => {
+      try {
+        let r = await sheetPost({ action:'addInventoryItems', updatedBy:activePerson,
+          items:prepared.map(p => ({ name:p.name, qty:p.qty, ingId:p.ingId, brand:p.brand })) });
+        if (r && /unknown action/i.test(String(r.error||''))){        // older Code.gs: one at a time
+          let ok = 0;
+          for (const p of prepared){
+            const q = await sheetPost({ action:'addInventoryItem', item:p.name, quantity:p.qty, updatedBy:activePerson,
+                                        ingId:p.ingId, brand:p.brand });
+            if (q && !q.error && q.success !== false) ok++;
+          }
+          r = ok ? { success:true } : { error:'all failed' };
+        }
+        if (!r || r.error || r.success === false){
+          inventory = snapshot; renderKitchen();
+          toast("Couldn't save to your kitchen \u2014 nothing was added. Try again.", { ms: 5000 });
+          return 0;
+        }
+        prepared.filter(p => !p.ingId).forEach(p => { invSeen[p.name.toLowerCase()] = 1; invQueue.push({ name:p.name }); });
+        runInvLearn();
+        return prepared.length;
+      } finally { invWriting--; }
+    })();
+    return { count: prepared.length, done };
+  }
+
+  // Existing rows with no link: exact matches are linked quietly, the rest go through the questions,
+  // a few per session so a long shelf doesn't turn into a quiz.
+  async function linkExistingInventory(){
+    if (!ingredients.length || invWriting) return;
+    const silent = [];
+    inventory.filter(i => !i.ingId).forEach(i => {
+      const k = i.name.toLowerCase();
+      if (invSeen[k]) return;
+      const r = resolveIng(i.name);
+      if (r && r.ing && r.confidence === 'exact'){
+        invSeen[k] = 1;
+        silent.push({ name:i.name, ingId:r.ing.id, brand:invBrandOf(i.name, r.ing) });
+      } else if (r && r.ing){
+        if (invAutoAsks < INV_AUTO_ASK_MAX){ invAutoAsks++; invSeen[k] = 1; invQueue.push({ name:i.name }); }
+      } else if (invAutoNew < INV_AUTO_NEW_MAX){ invAutoNew++; invSeen[k] = 1; invQueue.push({ name:i.name }); }
+    });
+    if (silent.length){
+      silent.forEach(l => { const it = inventory.find(x => x.name === l.name); if (it){ it.ingId = l.ingId; it.brand = l.brand; } });
+      renderKitchen();
+      const r = await sheetPost({ action:'linkInventory', links:silent });
+      if (r && /unknown action/i.test(String(r.error||''))) return;     // backend not updated yet
+    }
+    runInvLearn();
+  }
+
+  function setInvLink(name, ingId, brand){
+    const it = inventory.find(x => x.name.toLowerCase() === String(name).toLowerCase());
+    if (it){ it.ingId = ingId; it.brand = brand || ''; }
+    renderKitchen();
+    return sheetPost({ action:'linkInventory', links:[{ name:name, ingId:ingId, brand:brand || '' }] });
+  }
+
+  async function runInvLearn(){
+    if (invBusy || !invQueue.length) return;
+    if (isSheetOpen()){ setTimeout(runInvLearn, 2000); return; }
+    invBusy = true;
+    const q = invQueue.shift();
+    try {
+      const it = inventory.find(x => x.name.toLowerCase() === q.name.toLowerCase());
+      if (!it || it.ingId){ invBusy = false; runInvLearn(); return; }          // gone, or linked meanwhile
+      const cands = ingCandidates(q.name);
+      if (cands.length){ askSameIngredient(q.name, cands); return; }          // released by the answer
+      await createIngredientFromClaude(q.name);
+    } catch(e){ console.error('learn ingredient', e); }
+    invBusy = false;
+    runInvLearn();
+  }
+
+  function askSameIngredient(name, cands){
+    const btn = 'style="border:0.5px solid var(--border);border-radius:10px;margin-bottom:8px;"';
+    window._sameIng = { name:name, cands:cands };
+    openSheet(`
+      <h2>Which ingredient is this?</h2>
+      <p class="muted" style="margin:8px 0 14px;line-height:1.45;">You added <b>${esc(name)}</b>.
+        Is it one we already have? Dishes that use it will then take it off your shelf, and your answer is remembered for everyone.</p>
+      ${cands.map((c,i) => `<button class="ac-item" ${btn} onclick="answerSameIngredient(${i})">Yes, it's ${esc(cap(String(c.name)))}${
+        c.group ? `<span class="ac-tag">${esc(c.group)}</span>` : ''}</button>`).join('')}
+      <button class="ac-item" ${btn} onclick="answerSameIngredient(-1)">No, it's something else</button>
+      <button class="btn-ghost" style="width:100%;margin-top:4px;" onclick="answerSameIngredient(-2)">Not now</button>`);
+  }
+  async function answerSameIngredient(i){
+    const s = window._sameIng; window._sameIng = null;
+    closeSheet();
+    if (!s){ invBusy = false; runInvLearn(); return; }
+    try {
+      if (i === -2){ /* leave it unmatched; asked again next session */ }
+      else if (i >= 0){
+        const ing = s.cands[i];
+        const alias = invClean(s.name);
+        if (alias && alias !== String(ing.name).toLowerCase()){
+          const r = await sheetPost({ action:'saveIngredientAlias', ingId:ing.id, alias:alias });
+          if (r && r.success && r.aliases) ing.aliases = r.aliases;
+        }
+        await setInvLink(s.name, ing.id, invBrandOf(s.name, ing));
+        toast(`Got it: \u201c${s.name}\u201d is ${cap(String(ing.name))}`);
+      } else {
+        await createIngredientFromClaude(s.name);
+      }
+    } catch(e){ console.error('answerSameIngredient', e); }
+    invBusy = false;
+    runInvLearn();
+  }
+
+  function validateNewIngredient(r){
+    if (!r || typeof r !== 'object') return { error:'no answer' };
+    if (r.notFood === true) return { error:'not food' };
+    const nm = String(r.name || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    if (!/^[a-z0-9 ()-]{2,40}$/.test(nm)) return { error:'bad name' };
+    const k = +r.kcal, p = +r.p, c = +r.c, f = +r.f, fib = +r.fib;
+    if ([k, p, c, f, fib].some(x => !isFinite(x) || x < 0) || k > 900 || p + c + f > 105) return { error:'bad macros' };
+    const calc = 4 * p + 4 * c + 9 * f;
+    if (k > 30 && Math.abs(calc - k) > Math.max(60, 0.35 * k)) return { error:'macros disagree with energy' };
+    const groups = ingGroupList();
+    const gw = String(r.group || '').trim().toLowerCase();
+    const group = groups.find(g => g.toLowerCase() === gw) || 'Other';
+    return { name:nm, hindi:String(r.hindi || '').slice(0, 40), group, state:'raw', kcal:k, p, c, f, fib,
+             density:(+r.density > 0 && +r.density < 3) ? +r.density : 0,
+             pieceGrams:(+r.pieceGrams > 0 && +r.pieceGrams < 2000) ? +r.pieceGrams : 0, error:'' };
+  }
+  function ingGroupList(){
+    const seen = {}, out = [];
+    ingredients.forEach(i => { const g = String(i.group || '').trim(); if (g && !seen[g]){ seen[g] = 1; out.push(g); } });
+    return out;
+  }
+
+  async function createIngredientFromClaude(typed){
+    toast(`Adding \u201c${typed}\u201d to the ingredient library\u2026`, { ms:4000 });
+    try {
+      await loadIngredients();
+      const prompt =
+        `A household added "${typed}" to its kitchen list. Identify the plain INGREDIENT, without brand, pack size or marketing words. ` +
+        `If it is not a food or drink ingredient (gibberish, an object, a person), return only {"notFood":true}.\n` +
+        `Return JSON: {"name":"generic English name, lowercase, 1 to 3 words (e.g. instant coffee, whole wheat flour)",` +
+        `"hindi":"","group":"ONE of: ${ingGroupList().join(' | ')} | Other",` +
+        `"kcal":0,"p":0,"c":0,"f":0,"fib":0,"density":0,"pieceGrams":0}\n` +
+        `kcal, p (protein), c (carbs), f (fat), fib (fibre) are per 100 g of the ingredient as sold. ` +
+        `density is g per ml, only for liquids or powders normally sold by volume, else 0. ` +
+        `pieceGrams is the typical weight of one piece, only for things sold by count (eggs, lemons), else 0.`;
+      const r = await askJSON(prompt, 500);
+      const v = validateNewIngredient(r);
+      if (v.error){ console.warn('ingredient proposal rejected:', v.error, r); toast(`Couldn't match \u201c${typed}\u201d yet. It stays as typed.`); return; }
+      // Is the generic name already in the library under another spelling? Then this is an alias, not a new row.
+      const known = resolveIng(v.name);
+      let ingId = (known && known.ing && known.confidence === 'exact') ? known.ing.id : '';
+      if (!ingId){
+        const ar = await sheetPost({ action:'addIngredients', items:[v] });
+        if (!ar || ar.error || !ar.ids || !ar.ids[v.name]){ toast(`Couldn't add \u201c${typed}\u201d to the library yet. It stays as typed.`); return; }
+        ingId = ar.ids[v.name];
+      }
+      const alias = invClean(typed);
+      if (alias && alias !== v.name) await sheetPost({ action:'saveIngredientAlias', ingId:ingId, alias:alias });
+      await loadIngredients(true);
+      const ing = ingIndex[ingId];
+      await setInvLink(typed, ingId, ing ? invBrandOf(typed, ing) : '');
+      toast(`\u201c${typed}\u201d is now ${cap(v.name)} in the ingredient library` + (known && known.ing ? '' : ' (estimated)'));
+    } catch(e){
+      console.error('create ingredient', e);
+      toast(`Couldn't match \u201c${typed}\u201d yet. It stays as typed.`);
+    }
   }
 
   async function removeItem(name){
@@ -4806,7 +5271,7 @@
     toast(name + ' removed', { undo: async ()=>{
       inventory = backup; renderKitchen();
       const it = backup.find(i=>i.name===name);
-      if (it) await sheetPost({ action:'addInventoryItem', item:it.name, quantity:it.qty, updatedBy:activePerson });
+      if (it) await sheetPost({ action:'addInventoryItem', item:it.name, quantity:it.qty, updatedBy:activePerson, ingId:it.ingId||'', brand:it.brand||'' });
       toast('Put back');
     }});
     await sheetPost({ action:'removeInventoryItem', item:name });
@@ -5244,7 +5709,7 @@
   async function openShopSheet(){
     openSheet(`<h2>Shopping list</h2><div class="muted" style="margin-top:12px;">Building it<span class="dots"></span></div>`);
     const low = lowStock();
-    let items = low.map(i=>({ item:i.name, qty:'restock', cat:categorize(i.name) }));
+    let items = low.map(i=>({ item:invTitle(i), qty:'restock', cat:invGroupOf(i) }));
     try {
       const r = await askFast(
         `Household kitchen. Running low: ${low.map(i=>i.name+' ('+i.qty+')').join(', ') || 'nothing'}.\n` +
@@ -5669,6 +6134,7 @@
             }).join('\n') + '\n'
           : `This is being planned AHEAD — it is the next ${slot}, not today's remaining food, so plan it as a normal ${slot} carrying its usual share of the day's targets rather than trying to close today's gaps.\n`) +
         `In the kitchen: ${inventory.map(i=>i.name+' ('+i.qty+')').join(', ') || 'not much'}.\n` +
+        (inventory.length ? `Favour dishes the kitchen can mostly make from what is listed; a dish needing a few things that are not there is fine, one that needs mostly new things is not.\n` : '') +
         `Recently eaten (avoid repeating): ${allMeals().slice(0,8).map(m=>m.dish).join(', ') || 'nothing'}.\n` +
         (blocked.size && !craving
           ? `The whole household ate these in the last ${REPEAT_BLOCK_DAYS} days — they are BANNED, do not suggest them in any form: ${[...blocked].map(cap).join(', ')}.\n`
@@ -5879,6 +6345,7 @@
                 </span>
               </div>
               <div class="tiny" style="margin-top:3px;color:var(--text2);">${dishLine(m)}</div>
+              ${missingMarkup(m, i)}
               ${expanded ? `<div style="margin-top:8px;padding:10px;background:var(--surface2);border-radius:8px;"
                  onclick="event.stopPropagation()">${detailBits}</div>` : ''}
             </div>
@@ -6404,7 +6871,7 @@
     let title = activeSlot()==='breakfast' ? 'नाश्ता' : activeSlot()==='lunch' ? 'खाना' : 'खाना';
     orderLines = dishes.map(d => {
       const pr = prepFor(d);
-      return `${d.dish} — ${portionText(d)}` + (pr ? ` (${pr.note})` : '');
+      return `${d.dish} — ${portionText(d)}` + (d.note ? ` (${d.note})` : '') + (pr ? ` (${pr.note})` : '');
     });
     renderCookSheet(title, lang, dishes);
 
@@ -6412,13 +6879,14 @@
     try {
       const list = dishes.map(d=>{
         const pr = prepFor(d);
-        return `${d.dish} for ${d.for.length} (${whoLabel(d.for)})` + (pr ? ` [advance prep: ${pr.note}]` : '');
+        return `${d.dish} for ${d.for.length} (${whoLabel(d.for)})` + (d.note ? ` [household's note for this dish: "${d.note}"]` : '') + (pr ? ` [advance prep: ${pr.note}]` : '');
       }).join('; ');
       const r = await askFast(
         `A home cook in India who speaks ${lang.name} needs a short spoken order for ${activeSlot()}: ${list}.\n` +
         `Do NOT give cooking instructions or methods — she knows how to cook. Only say WHAT to make and HOW MUCH.\n` +
         `One line per dish: dish name, then portion as a number of people or units, using digits ` +
         `(3 logon ke liye, 4 ande). If a dish is only for some people, name them. Everyday spoken ${lang.name}.\n` +
+        `If a dish has a [household's note], carry that note over into the same line in ${lang.name}, faithfully and briefly (e.g. less spicy, not too cold) \u2014 it is the household's own instruction.\n` +
         `If a dish has [advance prep] marked, add that instruction to the end of that same line in ${lang.name} ` +
         `(e.g. soaking or marinating), phrased as something to do now — she will otherwise miss it.\n` +
         `Return {title, lines} where title is the meal name in ${lang.name} script and lines is an array of ` +
@@ -6826,10 +7294,9 @@
           // ("Amul Taaza Toned Milk 500ml"), and every one that lands raw is a
           // duplicate row someone has to merge afterwards. The rewrite goes into
           // the box, not straight to the sheet, so it is reviewed before saving.
+          // v4.22. Names are NOT rewritten any more: the brand is kept as typed, and the link to the
+          // library is made when the items are saved (see writeKitchenLines).
           await loadIngredients();
-          const c = canonBlock(text);
-          text = c.text;
-          if (c.changes.length) photoCanonNote = c.changes.length;
         } else {
           text = (d.dish_name || 'Meal') +
                  (d.components && d.components.length ? ' — ' + d.components.join(', ') : '');
@@ -6913,7 +7380,11 @@
     renderPlanCard();
     const p = me();
     document.getElementById('y-who').innerHTML = Object.keys(members).map(n=>
-      `<button class="chip ${n===activePerson?'on':''}" onclick="setPerson(${jsAttr(n)})">${esc(n)}</button>`).join('');
+      `<button class="chip ${n===activePerson?'on':''}" style="display:inline-flex;align-items:center;gap:6px;" onclick="setPerson(${jsAttr(n)})">${avatarHtml(n, 18)}${esc(n)}</button>`).join('');
+    const so = document.getElementById('y-signout');
+    if (so) so.classList.toggle('hidden', !(LOGIN_ON && SESS));
+    const lo = document.getElementById('y-logout');
+    if (lo && LOGIN_ON && SESS && !logoutArmed) lo.textContent = 'Switch kitchen';
 
     document.getElementById('y-targets').innerHTML = [
       ['Calories', p.cal, 'kcal'], ['Protein', p.protein, 'g'],
@@ -6937,13 +7408,6 @@
         Tapping a few dishes you like makes every suggestion better — and it's faster than typing.</div>`);
 
     const lang = LANGS[settings.cookLang] || LANGS.hi;
-    const total = Object.keys(dishInfo).length;
-    const confirmed = Object.values(dishInfo).filter(d=>d.source==='confirmed').length;
-    const noFib = Object.values(dishInfo).filter(d=>d.fib==null).length;
-    document.getElementById('y-dishcount').textContent = total
-      ? `${total} dish${total===1?'':'es'} · ${confirmed} confirmed, ${total-confirmed} estimated` +
-        (noFib ? ` · ${noFib} without fibre yet` : '')
-      : 'No dishes yet — they build up as you log meals.';
 
     const advLabel = ['only what she knows','mostly familiar','happy to try new'][+settings.adventure] || 'mostly familiar';
     const knownCount = repertoire(999).length;
@@ -7434,12 +7898,81 @@
     document.getElementById('hhgate').classList.remove('hidden');
     renderHhGate();
   }
+
+  // ── Sign-in screen and kitchen picker (v4.24) ──
+  function loadGoogle(cb){
+    if (window.google && google.accounts && google.accounts.id) return cb(true);
+    const el = document.createElement('script');
+    el.src = 'https://accounts.google.com/gsi/client'; el.async = true;
+    el.onload = () => cb(true); el.onerror = () => cb(false);
+    document.head.appendChild(el);
+  }
+  function renderLoginGate(){
+    const b = document.getElementById('hhgate-body');
+    b.innerHTML = `
+      <h1>Welcome</h1>
+      <p class="muted" style="margin:10px 0 22px;">Sign in with Google to open your kitchen, join a friend's, or start a new one.
+        We keep your name, email and photo only to know who is who in the house.</p>
+      <div id="g-btn" style="min-height:44px;"></div>
+      <div id="hh-msg" class="muted" style="font-size:13px;margin-top:14px;"></div>`;
+    loadGoogle(ok => {
+      if (!ok){ hhMsg("Couldn't reach Google. Check your connection and reload."); return; }
+      try {
+        google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: onGoogleCredential, auto_select: false });
+        google.accounts.id.renderButton(document.getElementById('g-btn'),
+          { theme:'outline', size:'large', text:'continue_with', shape:'pill', width:280 });
+      } catch(e){ hhMsg("Google sign-in didn't start. Reload and try again."); }
+    });
+  }
+  async function onGoogleCredential(resp){
+    if (!resp || !resp.credential){ hhMsg("Google didn't send a sign-in. Try again."); return; }
+    hhMsg('Signing you in…');
+    const r = await sheetPost({ action:'authGoogle', idToken: resp.credential });
+    if (!r || r.error || !r.session){ hhMsg((r && r.error) || "Couldn't sign in. Try again."); return; }
+    setSession(r.session, r.user);
+    MY_HHS = r.households || [];
+    authShown = false;
+    await afterLogin();
+  }
+  async function afterLogin(){
+    // A phone that already has a kitchen and its PIN joins it now, once, and never needs the PIN again.
+    if (HH && HH_PIN && !MY_HHS.some(h => h.hh === HH)){
+      const j = await sheetPost({ action:'joinHousehold', hh:HH, pin:HH_PIN });
+      if (j && j.success){ location.reload(); return; }
+    }
+    if (HH && MY_HHS.some(h => h.hh === HH)){ location.reload(); return; }
+    hhMode = MY_HHS.length ? 'pick' : 'new';
+    renderHhGate();
+  }
+  function openMyKitchen(i){
+    const h = MY_HHS[i]; if (!h) return;
+    if (h.hh !== (HH || '').toLowerCase()) wipeDeviceCache();
+    setHousehold(h.hh, '');
+    authShown = false;
+    location.reload();
+  }
+  async function loadMyKitchens(){
+    const r = await sheetPost({ action:'myHouseholds' });
+    if (r && r.households){ MY_HHS = r.households; return true; }
+    if (r && /session expired|sign in required/i.test(String(r.error||''))){ setSession('', null); renderHhGate(); }
+    return false;
+  }
   function setHhMode(m){ hhMode = m; renderHhGate(); }
 
   function renderHhGate(){
+    if (LOGIN_ON && !SESS){ renderLoginGate(); return; }
     const b = document.getElementById('hhgate-body');
-    b.innerHTML = `
-      <h1>Set up your kitchen</h1>
+    const who = LOGIN_ON ? `<div class="row" style="margin-bottom:16px;">
+        <span class="tiny">Signed in as ${esc((USER && (USER.name || USER.email)) || 'you')}</span>
+        <button class="btn-ghost" style="padding:0;min-height:0;font-size:12px;text-decoration:underline;" onclick="signOutGoogle()">Not you?</button></div>` : '';
+    const picker = (LOGIN_ON && MY_HHS.length) ? `
+      <div class="muted" style="margin:0 0 10px;">Your kitchens</div>
+      <div style="margin-bottom:18px;">${MY_HHS.map((h,i) =>
+        `<button class="ac-item" style="border:0.5px solid var(--border);border-radius:10px;margin-bottom:8px;width:100%;text-align:left;"
+           onclick="openMyKitchen(${i})">${esc(h.name)}${h.person ? `<span class="ac-tag">${esc(h.person)}</span>` : ''}</button>`).join('')}</div>
+      <div class="muted" style="margin:0 0 10px;">Or</div>` : '';
+    b.innerHTML = who + picker + `
+      <h1>${picker ? 'Another kitchen' : 'Set up your kitchen'}</h1>
       <p class="muted" style="margin:10px 0 22px;">
         Everyone in the house shares one kitchen — the same menu, the same shelf, the same cook.
       </p>
@@ -7510,9 +8043,16 @@
   function authFailed(err){
     if (authShown) return;
     authShown = true;
+    if (/session expired|sign in required/i.test(err)){
+      setSession('', null);
+      startHouseholdGate();
+      hhMsg('Please sign in again.');
+      return;
+    }
     hhMode = 'join';
     startHouseholdGate();
-    hhMsg(/pin/i.test(err) ? "That PIN doesn't match this kitchen. Enter it again."
+    hhMsg(/not a member/i.test(err) ? 'You are no longer in this kitchen. Join again with the house name and its PIN.'
+        : /pin/i.test(err) ? "That PIN doesn't match this kitchen. Enter it again."
                            : "That kitchen wasn't found. Check the house name.");
   }
 
@@ -7545,6 +8085,16 @@
     const pin = (document.getElementById('hh-join-pin').value||'').trim();
     if (!id || !pin){ hhMsg('Both the house name and the PIN are needed.'); return; }
     hhMsg('Checking…');
+    if (LOGIN_ON && SESS){
+      // First time in this kitchen: the PIN is checked once and the account is added to it.
+      const j = await sheetPost({ action:'joinHousehold', hh:id, pin:pin });
+      if (!j || j.error || !j.hh){ hhMsg((j && j.error) || "That house name and PIN didn't match."); return; }
+      if (j.hh !== (HH || '').toLowerCase()) wipeDeviceCache();
+      setHousehold(j.hh, '');
+      authShown = false;
+      location.reload();
+      return;
+    }
     // Set first, then verify — whoami travels on the ordinary authenticated path,
     // so a wrong PIN fails exactly the way every other request would.
     const prev = [HH, HH_PIN];
@@ -7593,6 +8143,7 @@
 
   function startOnboarding(){
     onbStep = 0;
+    if (LOGIN_ON && !onbData.name && USER && USER.name) onbData.name = USER.name;
     // A new person starts with an empty palate, not whoever was last on this phone.
     taste = { like:[], avoid:[], style:[] };
     tasteDiscovered = []; tasteExpansions = 0; tasteTab = 'dish';
@@ -7605,14 +8156,18 @@
     const b = document.getElementById('onb-body');
     const existing = Object.keys(members);
     const dots = `<div style="display:flex;gap:6px;margin-bottom:28px;">` +
-      [0,1,2,3].map(i=>`<div style="height:3px;flex:1;border-radius:2px;background:${i<=onbStep?'var(--haldi)':'var(--border)'}"></div>`).join('') + `</div>`;
+      [0,1,2,3,4].map(i=>`<div style="height:3px;flex:1;border-radius:2px;background:${i<=onbStep?'var(--haldi)':'var(--border)'}"></div>`).join('') + `</div>`;
 
     if (onbStep === 0){
+      // v4.24. With sign-in, a name already taken by another account can't be picked.
+      const claimed = {};
+      if (LOGIN_ON) PEOPLE.forEach(p => { if (p.person && !p.me) claimed[p.person.toLowerCase()] = 1; });
+      const pickable = existing.filter(n => !claimed[n.toLowerCase()]);
       b.innerHTML = dots + `
-        <h1>Who's using this?</h1>
+        <h1>${LOGIN_ON && pickable.length ? 'Which one is you?' : "Who's using this?"}</h1>
         <p class="muted" style="margin:10px 0 22px;">Everything gets tracked per person, so start with you.</p>
-        ${existing.length ? `<div class="chips" style="margin-bottom:16px;">
-          ${existing.map(n=>`<button class="chip" onclick="pickExisting(${jsAttr(n)})">${esc(n)}</button>`).join('')}
+        ${pickable.length ? `<div class="chips" style="margin-bottom:16px;">
+          ${pickable.map(n=>`<button class="chip" onclick="pickExisting(${jsAttr(n)})">${esc(n)}</button>`).join('')}
         </div><div class="tiny" style="margin-bottom:20px;">Or add yourself:</div>` : ''}
         <div class="field"><input id="ob-name" placeholder="Your name" value="${esc(onbData.name)}"></div>
         <button class="btn-primary" style="width:100%;" onclick="onbNext()">Continue</button>`;
@@ -7709,8 +8264,27 @@
               `<button class="chip ${v==='maintain'?'on':''}" onclick="pickOne(this)" data-v="${v}">${l}</button>`).join('')}
           </div></div>
         <div class="btn-row">
-          <button onclick="finishOnboarding(true)">Skip</button>
-          <button class="btn-primary" onclick="finishOnboarding()">Done</button>
+          <button onclick="onbNext(true)">Skip</button>
+          <button class="btn-primary" onclick="onbNext()">Continue</button>
+        </div>`;
+    }
+
+    // v4.21. The kitchen comes last, before Home, because Cook next and the shopping list are
+    // only useful against what is actually on the shelf. Skippable: a fresh household with an
+    // empty shelf is a legitimate state, and it can be filled from the Kitchen tab any time.
+    if (onbStep === 4){
+      b.innerHTML = dots + `
+        <h1>What's in your kitchen?</h1>
+        <p class="muted" style="margin:10px 0 18px;">So suggestions use what you have and tell you what to order.
+          One item per line, with a rough amount. Spices can wait.</p>
+        <div class="field">
+          <textarea id="ob-kitchen" rows="8" style="width:100%;" aria-label="Kitchen items"
+            placeholder="Paneer 200 g&#10;Eggs 6 pcs&#10;Atta 2 kg&#10;Milk 1 l&#10;Rice 1 kg&#10;Onion 1 kg">${esc(onbData.kitchen || '')}</textarea>
+        </div>
+        <div class="tiny" style="margin-bottom:16px;color:var(--text3);">You can scan a photo of the shelf later from the Kitchen tab.</div>
+        <div class="btn-row">
+          <button onclick="obFinishKitchen(true)">Skip for now</button>
+          <button class="btn-primary" onclick="obFinishKitchen()">Done</button>
         </div>`;
     }
 
@@ -7724,7 +8298,15 @@
     if (wrap) wrap.classList.toggle('hidden', btn.dataset.v !== '__other');
   }
 
-  function pickExisting(n){
+  async function linkMyPerson(n){
+    if (!(LOGIN_ON && SESS)) return true;
+    const r = await sheetPost({ action:'linkPerson', person:n });
+    if (!r || r.error || r.success === false){ toast((r && r.error) || "Couldn't link that name. Try again."); return false; }
+    PEOPLE = PEOPLE.filter(p => !p.me).concat([{ person:n, photo:(USER && USER.picture) || '', me:true }]);
+    return true;
+  }
+  async function pickExisting(n){
+    if (!(await linkMyPerson(n))) return;
     activePerson = n;
     saveLocal();
     document.getElementById('onb').classList.add('hidden');
@@ -7737,6 +8319,10 @@
       const n = (document.getElementById('ob-name').value || '').trim();
       if (!n){ toast('Enter your name'); return; }
       onbData.name = n;
+      if (LOGIN_ON && SESS){
+        linkMyPerson(n).then(ok => { if (ok){ onbStep = 1; renderOnb(); } });
+        return;
+      }
     }
     // A known city carries its own region, so the region chips only exist for the
     // "somewhere else" case — guessing a region from a city we don't have would
@@ -7776,8 +8362,16 @@
       onbData.weight = +document.getElementById('ob-weight').value || 70;
       onbData.goal = picked('ob-goal') || 'maintain';
     }
+    // A person joining a household whose shelf is already filled doesn't need to redo it.
+    if (onbStep === 3 && inventory.length){ finishOnboarding(true); return; }
     onbStep++;
     renderOnb();
+  }
+
+  function obFinishKitchen(skip){
+    const el = document.getElementById('ob-kitchen');
+    onbData.kitchen = skip ? '' : ((el && el.value) || '').trim();
+    finishOnboarding(true);
   }
 
   // `skipStats` comes from the last step's Skip button. The cook's language is no
@@ -7822,7 +8416,7 @@
     // v4.13. sheetPost resolves with {error} rather than throwing. Ignoring it is how a
     // finished onboarding could look fine while nothing had reached the Sheet.
     if (!saved || saved.error){
-      if (saved && /bad pin|unknown household/i.test(String(saved.error||''))){ authFailed(String(saved.error)); return; }
+      if (saved && /bad pin|unknown household|session expired|sign in required|not a member/i.test(String(saved.error||''))){ authFailed(String(saved.error)); return; }
       toast("Couldn't save to your kitchen" + (saved && saved.error ? ': ' + saved.error : '. Check your connection.'), { ms: 6000 });
     }
     await sheetPost({ action:'updateMacros', person:name, calories:cal, protein, carbs, fat, weight });
@@ -7830,6 +8424,15 @@
       likes:members[name].likes, dislikes:members[name].dislikes,
       allergies:members[name].allergies, favourites:members[name].favourites,
       picks:members[name].picks });
+
+    // v4.21. The shelf typed during onboarding, stored the same way as the Kitchen tab does it.
+    const kLines = String(onbData.kitchen || '').split('\n').map(l => l.trim()).filter(Boolean);
+    if (kLines.length){
+      const w = await writeKitchenLines(kLines);
+      const n = await w.done;
+      if (n < kLines.length) toast(n ? 'Saved ' + n + ' of ' + kLines.length + ' kitchen items' : "Couldn't save the kitchen \u2014 add it from the Kitchen tab", { ms: 5000 });
+      onbData.kitchen = '';
+    }
 
     // The repertoire question comes last, after the sheet writes, because it needs
     // dishInfo hydrated to know whether the kitchen already has one. If it does,
@@ -7891,15 +8494,20 @@
       'It turns red once there is no longer time before that meal.',
       'In the evening, Today asks what you want tomorrow so the soak can start tonight.'
     ]],
-    ['Macros and the dish database', 'Estimated once, corrected forever.', [
-      'A new dish is costed by Claude once and saved to the shared sheet.',
-      'Estimates are marked as such. Correct one and it becomes confirmed.',
-      'A confirmed number is never overwritten by a later guess.',
+    ['Macros and the food library', 'One shared library, kept by us.', [
+      'A new dish or ingredient is costed once and added to the shared library as an estimate.',
+      'You cannot edit library numbers yourself. If something looks wrong, send it from You > Make this better.',
       'Nothing is stored on your phone — the Google Sheet is the source of truth.'
     ]],
     ['Train', 'Sets in plain language.', [
       '"bench press 3x10 60kg" works, spoken or typed.',
       'Check what it read back before logging.'
+    ]],
+    ['Signing in', 'Your Google account is your key.', [
+      'Sign in once on each phone. After that your kitchens open without a PIN.',
+      'The PIN is only for the first time you join a kitchen, or if you are removed and come back.',
+      'You can be in more than one kitchen: use Switch kitchen in You.',
+      'Housemates see your name and photo. Your email stays private.'
     ]],
     ['Sync and undo', 'It catches up on its own.', [
       'Refreshes every 30 seconds while open, and instantly when you return to it.',
@@ -7936,20 +8544,58 @@
   // ══════════ RENDER + INIT ══════════
   function renderAll(){
     if (!activePerson) return;
+    renderAvatar();
     renderToday();
     if (screen==='kitchen') renderKitchen();
     if (screen==='train')   renderTrain();
     if (screen==='you')     renderYou();
   }
 
+  // ── Who am I, with a face (v4.24) ──
+  function applyIdentity(){
+    if (!LOGIN_ON || !SESS || !peopleLoaded || identityApplied) return;
+    identityApplied = true;
+    const me = PEOPLE.find(p => p.me && p.person);
+    if (me && members[me.person] && activePerson !== me.person){ activePerson = me.person; saveLocal(); renderAll(); }
+  }
+  // An account with no person yet (everyone who was here before sign-in): ask once which one they are.
+  function maybeLinkAccount(){
+    if (!LOGIN_ON || !SESS || !peopleLoaded || linkPrompted) return;
+    if (PEOPLE.some(p => p.me && p.person)) return;
+    const onb = document.getElementById('onb');
+    if (onb && !onb.classList.contains('hidden')) return;
+    linkPrompted = true;
+    startOnboarding();
+  }
+  function photoFor(name){
+    const n = String(name||'').toLowerCase();
+    const p = PEOPLE.find(x => x.person && x.person.toLowerCase() === n);
+    return (p && p.photo) || '';
+  }
+  function avatarHtml(name, px){
+    if (!LOGIN_ON) return '';
+    const url = photoFor(name);
+    const base = `width:${px}px;height:${px}px;border-radius:50%;flex:0 0 auto;`;
+    return url
+      ? `<img src="${esc(url)}" alt="" referrerpolicy="no-referrer" style="${base}object-fit:cover;vertical-align:middle;">`
+      : `<span aria-hidden="true" style="${base}display:inline-flex;align-items:center;justify-content:center;background:var(--surface2);color:var(--text2);font-size:${Math.round(px*0.5)}px;font-weight:600;vertical-align:middle;">${esc(String(name||'?').charAt(0).toUpperCase())}</span>`;
+  }
+  function renderAvatar(){
+    const el = document.getElementById('t-avatar');
+    if (el) el.innerHTML = (LOGIN_ON && activePerson) ? `<span title="${esc(activePerson)}">${avatarHtml(activePerson, 24)}</span>` : '';
+  }
+
   async function boot(){
     logEv('app_open');
     await syncAll(true);
+    applyIdentity(); maybeLinkAccount();
     loadMenu();
     // Match any dish name the library does not recognise exactly, so the day bar can
     // count it. Free: a lookup in the library, no Claude call.
     await healNames();
     reconcileStock().catch(e => console.error('reconcile', e));
+    // v4.21. Static library data for the "ingredients missing" label; fetched once, cached.
+    loadIngredients().then(() => { loadDishIngredients(); linkExistingInventory(); }).catch(e => console.error('dishIngs', e));
     // Two things may want the screen. Rating comes first because it's about meals that
     // already happened, and it only asks about dishes that logged themselves. Renewal
     // waits for the next open rather than stacking a second sheet on top of the first.
@@ -7968,7 +8614,7 @@
 
     // A device with no household can't sync, because there is nothing yet to sync
     // from. The gate therefore comes before onboarding, not alongside it.
-    if (!HH){
+    if (!HH || (LOGIN_ON && !SESS)){
       startHouseholdGate();
       return;
     }
