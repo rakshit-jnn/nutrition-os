@@ -542,7 +542,7 @@
   const VISION_API = '/api/vision';
   const MODEL      = 'claude-sonnet-4-5';
   const SHEET_URL  = 'https://script.google.com/macros/s/AKfycbxXDdY5y_QUVIML1Zb4nwTnuryI_Uqhe-EGwc_iDT_s5OZ9wJNcfWvILo4rCC5bN6XT/exec';
-  const VERSION    = 'v4.14';
+  const VERSION    = 'v4.15';
 
   // ══════════ HOUSEHOLD (v4.0) ══════════
   // Every request now carries which household it belongs to. Stored on the device
@@ -1449,7 +1449,7 @@
   // People are consistent, and a remembered "2 katori" beats a generic default.
   function defaultPortion(dish){
     const d = dishFor(dish);
-    const base = (d && d.servedAs === 'piece')
+    const base = isCountedDish(dish)
       ? { qty:1, measure:'Piece' } : { qty:1, measure:'Katori, standard' };
     const k = String(dish||'').trim().toLowerCase();
     for (let i = mealLog.length - 1; i >= 0; i--){
@@ -1462,11 +1462,22 @@
   }
   // A counted dish gets pieces only. Offering "katori" for roti invites a number
   // that means nothing.
+  // v4.15. Anything counted (a roti, an egg, a banana) can be logged as a number of pieces.
+  // "Piece" is now offered on EVERY dish, because a dish the library has not met yet (so we
+  // cannot know it is counted) was only offered katoris and plates. Counted dishes, known
+  // or recognised by name, get Piece first and default to it.
+  const COUNTED_NAMES = /\b(roti|chapati|chapatti|phulka|paratha|parantha|naan|puri|poori|bhatura|kulcha|idli|dosa|uttapam|vada|vadai|samosa|kachori|egg|eggs|omelette|boiled egg|banana|apple|orange|mango|guava|pear|banana|cutlet|tikki|kebab|momo|momos|pakora|pakoda|biscuit|cookie|bread|toast|slice|laddu|ladoo|gulab jamun|jalebi|sandwich|wrap|roll|date|dates|almond|almonds|cashew|walnut)\b/i;
+  function isCountedDish(dish){
+    const d = dishFor(dish);
+    if (d) return d.servedAs === 'piece';
+    return COUNTED_NAMES.test(String(dish || ''));
+  }
   function measureOptions(dish){
     const d = dishFor(dish);
     if (d && d.servedAs === 'piece') return ['Piece'];
     const vol = measures.filter(m=>m.type !== 'count').map(m=>m.measure);
-    return vol.length ? vol : ['Katori, standard'];
+    const list = vol.length ? vol : ['Katori, standard'];
+    return isCountedDish(dish) ? ['Piece'].concat(list) : list.concat(['Piece']);
   }
   // v4.12. Was [0.5, 1, 1.5, 2, 3]: nothing above 3, so 4 eggs, 6 idlis or 12 pieces of
   // anything could not be chosen, which made a counted dish's amount (and its calories and
@@ -2251,6 +2262,26 @@
   }
 
   // One line the prompts can use, combining picks and the free-text overflow.
+  // v4.15. What the household has SAID it likes, as a flat list: taste-picker picks, the
+  // free-text likes and the favourites, minus anything anyone avoids. Preferences are the
+  // first thing a menu should honour, before there is any meal history to learn from and
+  // after there is plenty, so this does not depend on the meal log at all.
+  function likedDishes(){
+    const out = [], seen = {}, avoid = {};
+    const split = v => String(v || '').split(/[,;\n|]/).map(x => x.trim()).filter(Boolean);
+    Object.keys(members).forEach(n => {
+      const t = tasteFor(n), p = members[n] || {};
+      t.avoid.concat(split(p.dislikes)).forEach(a => { avoid[a.toLowerCase()] = 1; });
+    });
+    Object.keys(members).forEach(n => {
+      const t = tasteFor(n), p = members[n] || {};
+      t.like.concat(t.style, split(p.likes), split(p.favourites)).forEach(l => {
+        const k = l.toLowerCase();
+        if (!seen[k] && !avoid[k]){ seen[k] = 1; out.push(l); }
+      });
+    });
+    return out;
+  }
   function tasteLine(person){
     const t = tasteFor(person), p = members[person] || {};
     const likes = t.like.concat(p.likes ? [p.likes] : []).filter(Boolean);
@@ -5344,7 +5375,7 @@
     // shared, cached or generated — not only the expensive one.
     logEv('menu_view', activeSlot(), activeSlot());
     const others = Object.keys(members).length;
-    const key = activeSlot() + '|' + others + '|' + craving + '|' + scopeKey();
+    const key = activeSlot() + '|' + others + '|' + craving + '|' + scopeKey() + '|' + likedDishes().length;
     if (!force && key === lastMenuFor && pages.length) return;
     // v3.12. The household's shared list comes FIRST — ahead of the local cache and
     // far ahead of Claude. If a flatmate already generated tonight's dinner, that is
@@ -5396,6 +5427,8 @@
     const slot = activeSlot();
     const known = repertoire(25);
     const blocked = blockedDishes();
+    const liked = likedDishes();
+    const likedMin = 3;
 
     // How far outside her repertoire the menu may wander. Left at "mostly
     // familiar" this keeps the menu boring in the good way — food the household
@@ -5406,7 +5439,7 @@
         `Reach for the less common everyday dishes of ${REGIONS[region()].name} — the sort of thing in this range: ${regionFood().unusual}. ` +
         `Still ordinary home cooking a domestic cook can pick up in one telling, and still genuinely eaten in ${REGIONS[region()].name}: not a restaurant dish, not another region's food, not a fusion.`
       : adv === 0
-      ? `EVERY option must come from the cook's known dishes listed above. If that means repeating a staple, repeat it — do not introduce anything new.`
+      ? `EVERY option must come from the cook's known dishes listed above or from the household's liked dishes. If that means repeating a staple, repeat it — do not introduce anything new.`
       : adv === 1
       ? `At most ONE of the options may be outside the cook's known dishes, and it must still be an ordinary Indian home dish she could pick up in one telling.`
       : `Up to TWO options may be dishes she hasn't made before, but they must still be simple everyday Indian home cooking.`;
@@ -5428,7 +5461,11 @@
         (blocked.size && !craving
           ? `The whole household ate these in the last ${REPEAT_BLOCK_DAYS} days — they are BANNED, do not suggest them in any form: ${[...blocked].map(cap).join(', ')}.\n`
           : '') +
-        (known.length ? `Dishes the cook already makes — draw from these first: ${known.join(', ')}.\n` : '') +
+        (liked.length ? `PREFERENCES COME FIRST. The household has said it likes: ${liked.join(', ')}. ` +
+          `At least ${likedMin} of the options MUST be one of these liked dishes (or a ${slot} dish clearly built on a liked ingredient or in a liked style) that suits a ${slot}. ` +
+          `This holds whether or not there is any eating history. Only skip a liked dish if it is banned, recently eaten, or wrong for the slot, and then take the next liked one. ` +
+          `Never suggest something a member avoids or is allergic to.\n` : '') +
+        (known.length ? `Dishes the cook already makes — after the liked dishes, draw from these: ${known.join(', ')}.\n` : '') +
         (wellMade.length ? `The cook makes these especially well — prefer them: ${wellMade.join(', ')}.\n` : '') +
         (poorlyMade.length ? `The cook makes these poorly — avoid or only if nothing better: ${poorlyMade.join(', ')}.\n` : '') +
         (cantMake.length ? `The cook does NOT know how to make these — never suggest them: ${cantMake.join(', ')}.\n` : '') +
