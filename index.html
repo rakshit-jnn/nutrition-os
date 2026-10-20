@@ -542,7 +542,7 @@
   const VISION_API = '/api/vision';
   const MODEL      = 'claude-sonnet-4-5';
   const SHEET_URL  = 'https://script.google.com/macros/s/AKfycbxXDdY5y_QUVIML1Zb4nwTnuryI_Uqhe-EGwc_iDT_s5OZ9wJNcfWvILo4rCC5bN6XT/exec';
-  const VERSION    = 'v4.17';
+  const VERSION    = 'v4.20';
 
   // ══════════ HOUSEHOLD (v4.0) ══════════
   // Every request now carries which household it belongs to. Stored on the device
@@ -1407,7 +1407,16 @@
     (menuBoard||[]).forEach(m => { if (m.date === d || m.date === t) out.push(m.dish); });
     return out;
   }
-  async function healNames(){ const n = await resolveNames(unresolvedCandidates()); scheduleMatching(); return n; }
+  async function healNames(){
+    const cands = unresolvedCandidates();
+    const n = await resolveNames(cands);
+    // v4.19. Every way a dish reaches today or tomorrow (menu add, a fixed plan, a manual or
+    // swept log) passes through here, so this is the one place the library learns new dishes.
+    // The ask-first queue paces itself: one question or one Claude call at a time.
+    learnUnknownDishes(cands, true);
+    scheduleMatching();
+    return n;
+  }
   function scheduleHeal(){
     clearTimeout(healTimer);
     healTimer = setTimeout(() => { healNames().catch(e => console.error('heal', e)); }, 800);
@@ -1959,10 +1968,12 @@
       // log that hasn't happened.
       toast(sw && sw.busy ? 'Added — it will log itself in a moment'
         : (dishNames.length>1 ? `${dishNames.length} dishes logged` : 'Logged'));
+      learnUnknownDishes(dishNames);
       return;
     }
     toast(dishNames.length>1 ? `${dishNames.length} dishes on the menu` : 'On the menu');
     syncAll(true);
+    learnUnknownDishes(dishNames);   // v4.19: a dish the library lacks is learned now
   }
 
   // ══════════ WHERE THIS HOUSEHOLD EATS ══════════
@@ -2512,6 +2523,15 @@
     syncAll(true);
   }
 
+  // "2" + "Katori, standard" -> "2 katori"; "3" + "Piece" -> "3 pcs"; "1" + "Piece" -> "1 pc".
+  function portionLabel(qty, measure){
+    const q = +qty; if (!(q > 0)) return '';
+    const m = String(measure || '').trim();
+    if (!m) return String(q);
+    if (/^piece$/i.test(m)) return q + (q === 1 ? ' pc' : ' pcs');
+    const short = m.replace(/,\s*standard$/i, '').replace(/,\s*/g, ' ').toLowerCase();
+    return q + ' ' + short;
+  }
   function menuGrouped(date, slot, withEaten){
     const out = [], idx = {};
     menuRowsFor(date, slot, withEaten).forEach(m => {
@@ -2521,6 +2541,19 @@
       if (!g.for.includes(m.person)) g.for.push(m.person);
       if (!g.portion && m.portion) g.portion = m.portion;
       g.rows.push(m);
+    });
+    // v4.18. A row's amount is Qty + Measure now (Portion was removed in v4.8), but this
+    // label still read the old Portion field, so every dish said "set portion" even after
+    // one was chosen. Build the label from what is actually stored; if people have
+    // different amounts, say who has what.
+    out.forEach(g => {
+      const withQty = g.rows.filter(r => +r.qty > 0);
+      if (!withQty.length) return;
+      const same = new Set(withQty.map(r => r.qty + '|' + (r.measure || ''))).size === 1
+                   && withQty.length === g.rows.length;
+      g.portion = same
+        ? portionLabel(withQty[0].qty, withQty[0].measure)
+        : withQty.map(r => r.person + ' ' + portionLabel(r.qty, r.measure)).join(', ');
     });
     // A dish is "eaten" only when every one of its rows has logged. Half-logged is a
     // real state (one person's row swept, another added after) and it shows as open.
@@ -4809,6 +4842,7 @@
       const rc = resolveCache[k];
       if (!rc || rc.status !== 'candidates') return;
       if (matchState[k] || (settings.noMatch || {})[k]) return;
+      if (learnSeen[k]) return;          // v4.19: the library-learning flow asks about this one
       out.push({ text:t, key:k, rc:rc });
     });
     return out;
@@ -4943,6 +4977,184 @@
     closeSheet();
     matchState[key] = 'dismissed';
     scheduleMatching();
+  }
+
+  // ══════════ THE LIBRARY LEARNS (v4.19) ══════════
+  // A dish added to the menu that the library does not know is learned right then, so by
+  // the time it is eaten it has macros and takes its ingredients off the shelf:
+  //   1. Is it a spelling of a dish we already have? If anything close exists, the PERSON is
+  //      asked ("Is Dosa the same as Plain dosa?"). Their answer becomes an alias.
+  //   2. Only if they say no (or nothing is close) is it a NEW dish: one Claude call proposes
+  //      its class and raw ingredient grams, ingredients the table lacks are added in the
+  //      same shape as the rest, and the dish is written through addDishToLibrary so the
+  //      sheet's formulas compute everything. It is flagged 'estimated'.
+  // Removing the dish from the menu later does NOT remove it from the library.
+  const DISH_CLASS_LIST = [
+    ['C01','Thin dal'],['C02','Thick dal'],['C03','Whole-legume gravy'],['C04','Gravy sabzi'],
+    ['C05','Semi-dry sabzi'],['C06','Dry sabzi'],['C07','Mash / puree'],['C08','Plain rice'],
+    ['C09','Mixed rice'],['C10','Porridge / khichdi'],['C11','Curd / raita'],['C12','Chutney / paste'],
+    ['C13','Thin soup / kadhi'],['C14','Dense sweet'],['C15','Liquid sweet'],['C16','Light snack'],
+    ['C17','Fried snack'],['C18','Raw salad'],['C19','Egg dish'],['C20','Meat gravy'],['C21','Dry meat'],
+    ['C22','Beverage'],['C23','Counted bread (per piece: roti, dosa, idli, paratha)'],
+    ['C24','Counted piece (per piece: samosa, vada, boiled egg, sandwich)']
+  ];
+  let learnQueue = [], learnBusy = false, learnSeen = {};
+
+  let autoLearned = 0;
+  const AUTO_LEARN_MAX = 3;   // per session, for dishes found by the background pass (not one the person just added)
+  function learnUnknownDishes(names, auto){
+    (names || []).forEach(n => {
+      const t = String(n || '').replace(/\s+/g, ' ').trim(), k = t.toLowerCase();
+      if (!t || learnSeen[k] || dishFor(t)) return;
+      if (/[+,&\/]/.test(t)) return;               // a combination of dishes, not one dish
+      if (auto){ if (autoLearned >= AUTO_LEARN_MAX) return; autoLearned++; }
+      learnSeen[k] = 1; learnQueue.push(t);
+    });
+    runLearnQueue();
+  }
+  async function runLearnQueue(){
+    if (learnBusy || !learnQueue.length) return;
+    if (isSheetOpen()){ setTimeout(runLearnQueue, 2000); return; }
+    learnBusy = true;
+    const name = learnQueue.shift();
+    try {
+      const r = await sheetPost({ action:'resolveDishTexts', texts:[name] });
+      const x = r && Array.isArray(r.results) ? r.results[0] : null;
+      if (!x){ learnBusy = false; return; }                 // backend unreachable: try on a later add
+      if (x.status === 'matched'){
+        resolveCache[name.toLowerCase()] = { status:'matched' };
+        teachAlias(name.toLowerCase(), x.dishId, x.aliases);
+        renderAll(); reconcileStock().catch(()=>{});
+        learnBusy = false; runLearnQueue(); return;
+      }
+      if (x.status === 'candidates' && (x.candidates || []).length){
+        askSameDish(name, x.candidates);                     // the person decides; learnBusy released by the answer
+        return;
+      }
+      await createDishFromClaude(name);
+    } catch(e){ console.error('learn dish', e); }
+    learnBusy = false;
+    runLearnQueue();
+  }
+
+  function askSameDish(name, cands){
+    const btn = 'style="border:0.5px solid var(--border);border-radius:10px;margin-bottom:8px;"';
+    const list = cands.slice(0, 4);
+    window._sameDish = { name:name, cands:list };
+    openSheet(`
+      <h2>Is this one of these?</h2>
+      <p class="muted" style="margin:8px 0 14px;line-height:1.45;">You added <b>${esc(name)}</b>.
+        Is it the same dish as one we already know? Your answer is remembered.</p>
+      ${list.map((c,i) => `<button class="ac-item" ${btn} onclick="answerSameDish(${i})">Yes, it's ${esc(c.canonicalName)}${
+        c.hindi ? `<span class="ac-tag">${esc(c.hindi)}</span>` : ''}</button>`).join('')}
+      <button class="ac-item" ${btn} onclick="answerSameDish(-1)">No, it's a different dish</button>
+      <button class="btn-ghost" style="width:100%;margin-top:4px;" onclick="answerSameDish(-2)">Not now</button>`);
+  }
+  async function answerSameDish(i){
+    const s = window._sameDish; window._sameDish = null;
+    closeSheet();
+    if (!s){ learnBusy = false; runLearnQueue(); return; }
+    try {
+      if (i === -2){ learnSeen[s.name.toLowerCase()] = 2; }       // not now: leave it alone this session
+      else if (i >= 0){
+        const c = s.cands[i];
+        const r = await sheetPost({ action:'saveDishAlias', text:s.name, dishId:c.dishId, method:'user' });
+        if (r && r.success){
+          teachAlias(s.name.toLowerCase(), r.dishId, r.aliases);
+          renderAll(); toast(`Got it: “${s.name}” is ${r.canonicalName}`);
+          reconcileStock().catch(()=>{});
+        } else toast(r && r.error ? r.error : "Couldn't save that. Try again.");
+      } else {
+        await createDishFromClaude(s.name);
+      }
+    } catch(e){ console.error('answerSameDish', e); }
+    learnBusy = false;
+    runLearnQueue();
+  }
+
+  // One Claude call. Everything it says is checked before anything is written.
+  async function createDishFromClaude(name){
+    toast(`Adding “${name}” to the food library…`, { ms:4000 });
+    try {
+      await loadIngredients();
+      const ingList = ingredients.map(i => i.id + '=' + i.name).join('; ');
+      const prompt =
+        `Add the dish "${name}" to a nutrition library of Indian home food. If "${name}" is not a real food or dish ` +
+        `(gibberish, a person, an object), return only {"notADish":true}.\n` +
+        `Pick ONE class from: ${DISH_CLASS_LIST.map(c => c[0] + ' ' + c[1]).join('; ')}.\n` +
+        `Give the dish as ONE typical home BATCH: the RAW (uncooked) grams of every ingredient that goes in, ` +
+        `including cooking oil/ghee and water where the dish is cooked with water. About 4 servings, total raw weight 400 to 2500 g.\n` +
+        `Use ingredient ids from this list wherever one fits: ${ingList}.\n` +
+        `For an ingredient NOT in the list, give "id": "" and a "name" (lowercase English, 1 to 3 words), and add it to "newIngredients" ` +
+        `with per-100g RAW values (kcal, p protein, c carbs, f fat, fib fibre) typical of IFCT/label data.\n` +
+        `If the class is C23 or C24 (counted), also give "pieces": how many pieces this batch makes.\n` +
+        `Return JSON: {"classId":"C..","pieces":0,"hindi":"","ingredients":[{"id":"","name":"","g":0}],` +
+        `"newIngredients":[{"name":"","hindi":"","group":"Vegetable|Cereal|Pulse|Spice|Dairy|Fat|Other","kcal":0,"p":0,"c":0,"f":0,"fib":0}]}`;
+      const r = await askJSON(prompt, 1500);
+      const v = validateDishProposal(r);
+      if (v.error){ console.warn('dish proposal rejected:', v.error, r); toast(`Couldn't add “${name}” yet. It stays uncosted.`); return; }
+
+      const idOf = {};
+      ingredients.forEach(i => { idOf[String(i.name).toLowerCase()] = i.id; });
+      if (v.newIngredients.length){
+        const ar = await sheetPost({ action:'addIngredients', items:v.newIngredients });
+        if (!ar || ar.error || !ar.ids){ toast(`Couldn't add “${name}” yet. It stays uncosted.`); return; }
+        Object.keys(ar.ids).forEach(k => { idOf[k] = ar.ids[k]; });
+      }
+      const lines = [];
+      for (const it of v.ingredients){
+        const isWater = it.id.toLowerCase() === 'water' || it.name === 'water';
+        const id = isWater ? 'water' : (it.id && ingIndex[it.id] ? it.id : idOf[it.name]);
+        if (!id) continue;                                                  // dropped, not guessed
+        lines.push({ ing: id, g: it.g });
+      }
+      if (lines.length < 2){ toast(`Couldn't add “${name}” yet. It stays uncosted.`); return; }
+      const w = await sheetPost({ action:'addDishToLibrary', name:name, classId:v.classId, hindi:v.hindi,
+        ingredients:lines, pieces:v.pieces || undefined, inputConfidence:'estimated' });
+      if (!w || w.error || w.success === false){ toast(`Couldn't add “${name}” yet. It stays uncosted.`); return; }
+      await loadIngredients(true);
+      await syncAll(true);
+      resolveCache[name.toLowerCase()] = { status:'matched' };
+      renderAll();
+      reconcileStock().catch(()=>{});
+      toast(`“${name}” added to the food library (estimated)`);
+    } catch(e){
+      console.error('create dish', e);
+      toast(`Couldn't add “${name}” yet. It stays uncosted.`);
+    }
+  }
+
+  // Sanity gate between Claude's answer and the shared library, which every household reads.
+  function validateDishProposal(r){
+    if (!r || typeof r !== 'object') return { error:'no answer' };
+    if (r.notADish === true) return { error:'not a dish' };
+    const classId = String(r.classId || '').toUpperCase();
+    if (!DISH_CLASS_LIST.some(c => c[0] === classId)) return { error:'bad class' };
+    const counted = classId === 'C23' || classId === 'C24';
+    const pieces = +r.pieces || 0;
+    if (counted && !(pieces >= 1 && pieces <= 60)) return { error:'counted dish needs pieces' };
+    const ing = (Array.isArray(r.ingredients) ? r.ingredients : []).slice(0, 25).map(x => ({
+      id: String((x && x.id) || '').trim(), name: String((x && x.name) || '').replace(/\s+/g, ' ').trim().toLowerCase(),
+      g: +(x && x.g) })).filter(x => (x.id || x.name) && x.g > 0 && x.g <= 3000);
+    if (ing.length < 2) return { error:'too few ingredients' };
+    const total = ing.reduce((s, x) => s + x.g, 0);
+    if (total < 100 || total > 6000) return { error:'implausible batch weight ' + total };
+    const nw = [], seen = {};
+    (Array.isArray(r.newIngredients) ? r.newIngredients : []).slice(0, 10).forEach(n => {
+      const nm = String((n && n.name) || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      if (!nm || seen[nm] || !/^[a-z0-9 ()-]{2,40}$/.test(nm)) return;
+      const k = +n.kcal, p = +n.p, c = +n.c, f = +n.f, fib = +n.fib;
+      if ([k, p, c, f, fib].some(x => !isFinite(x) || x < 0) || k > 900 || p + c + f > 105) return;
+      // Energy must roughly agree with the macros, or the numbers were made up.
+      const calc = 4 * p + 4 * c + 9 * f;
+      if (k > 30 && Math.abs(calc - k) > Math.max(60, 0.35 * k)) return;
+      seen[nm] = 1;
+      nw.push({ name:nm, hindi:String(n.hindi || ''), group:String(n.group || 'Other'), state:'raw',
+                kcal:k, p:p, c:c, f:f, fib:fib });
+    });
+    // Every ingredient must resolve: a known id, or one of the new ones. Unknown ids are dropped later.
+    return { classId:classId, pieces:counted ? Math.round(pieces) : 0, hindi:String(r.hindi || '').slice(0, 40),
+             ingredients:ing, newIngredients:nw, error:'' };
   }
 
   // ══════════ STOCK (v4.12) ══════════
