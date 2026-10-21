@@ -522,12 +522,51 @@
 </div>
 
 <script>
+  // ═══════════════════════════════════════════════════════════════════════════
+  // NUTRITION OS — index.html, the whole app in one file
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Static page on Netlify. Talks to two backends:
+  //   /api/claude, /api/claude-stream, /api/vision  Netlify functions (Claude proxy, metered)
+  //   SHEET_URL                                     Google Apps Script (Code.gs) → Google Sheets
+  //
+  // SECTIONS (search for the banner text, e.g. "══════════ SYNC"):
+  //   CONFIG · HOUSEHOLD · GOOGLE SIGN-IN   who this phone is, which kitchen it belongs to
+  //   STATE · STORAGE · DATE HELPERS        in-memory state, the 5 allowed localStorage keys, IST dates
+  //   SHEET API · SAVES · TOAST + UNDO      sheetGet/sheetPost, saveFailed(), toasts with undo
+  //   NAVIGATION · SYNC                     four tabs; ONE getAll request every 30 s while visible
+  //   CLAUDE · INSTRUMENTATION              askJSON / askFast / streaming; analytics events
+  //   TODAY · PORTIONS · NAME RESOLUTION    calorie card, Qty+Measure → grams → macros, dish matching
+  //   WISHLIST · COOK REPERTOIRE · PREP     saved dishes, what the cook knows, soak-ahead reminders
+  //   WHERE THIS HOUSEHOLD EATS · TASTE     region (drives food), taste picker
+  //   THE MENU                              what has been decided (shared, one row per person per dish)
+  //   FIXED MENU (the plan)                 multi-day plans that fill the Menu
+  //   MEAL LOGGING · DEFERRED WRITES        logging (5 s undo window before the write)
+  //   INGREDIENT RESOLUTION · MISSING       ingredient matching, "few ingredients missing"
+  //   INGREDIENT LIBRARY · KITCHEN          shelf list, groups, low stock, kitchen ↔ library linking
+  //   NEAR MISSES · THE LIBRARY LEARNS      "Is it X?" questions, Claude-proposed dishes (validated)
+  //   STOCK · COOK NEXT · DISH TYPEAHEAD    deduction receipts, menu suggestions, free typeahead
+  //   COOK RATING · TELLING THE COOK        ratings, spoken order in the cook's language
+  //   TRAIN · VOICE · PHOTO · SHEETS · YOU  workouts, mic, photo scan, bottom sheets, You tab
+  //   COOK'S REPERTOIRE · HOUSEHOLD GATE    onboarding grid, create / join kitchen
+  //   ONBOARDING · HELP · RENDER + INIT     first-run steps, help text, boot
+  //
+  // RULES THAT KEEP THIS WORKING (each one is a bug that already shipped once):
+  //   1. Every write checks saveFailed(r) and rolls the screen back; sheetPost never throws.
+  //   2. Dates from a Sheet go through toISODate()/menuDay(); "today" is today() (IST), never toISOString().
+  //   3. Values put inside onclick="…" go through jsAttr(); text put into HTML goes through esc().
+  //   4. New sync data = add it to ALL_READERS in Code.gs AND to the merge in syncAll().
+  //   5. An unknown number is null, never 0 ("not counted yet" ≠ zero calories).
+  //   6. A Claude answer the UI depends on is checked in code (validateDishProposal, plan arithmetic).
+  //   7. Client maths that mirrors Code.gs (gramsFor, resolveIng, parseStock) changes on both sides.
+  //   8. Only one declaration per function name (a second one silently replaces the first).
+  //   9. The Menu has its own position (menuView); Cook next uses activeSlot(). Don't mix them.
+  // Version history and the reasons behind each rule: HANDOFF.md.
+  // ═══════════════════════════════════════════════════════════════════════════
   // ══════════ CONFIG ══════════
   const CLAUDE_API = '/api/claude';
   const VISION_API = '/api/vision';
-  const MODEL      = 'claude-sonnet-4-5';
   const SHEET_URL  = 'https://script.google.com/macros/s/AKfycbxXDdY5y_QUVIML1Zb4nwTnuryI_Uqhe-EGwc_iDT_s5OZ9wJNcfWvILo4rCC5bN6XT/exec';
-  const VERSION    = 'v4.24';
+  const VERSION    = 'v4.25';
 
   // ══════════ HOUSEHOLD (v4.0) ══════════
   // Every request now carries which household it belongs to. Stored on the device
@@ -540,13 +579,6 @@
     localStorage.setItem('nos_hh', hh);
     localStorage.setItem('nos_pin', pin);
   }
-  // v4.13. A phone's cached people, settings and "who am I" belong to ONE household.
-  // Switching to a different one without dropping them is how a brand-new kitchen came up
-  // showing the original household's members: the cache was loaded at boot, survived the
-  // household gate, and onboarding then added the new person on top of it.
-  // A device with no recorded household predates v4.0, so its cache is the default
-  // household's ('home').
-  function deviceHousehold(){ return (HH || 'home').toLowerCase(); }
   function wipeDeviceCache(){
     try { ['nos2_members','nos2_active','nos2_settings'].forEach(k => localStorage.removeItem(k)); }
     catch(e){ console.warn('storage', e); }
@@ -796,6 +828,14 @@
     } catch(e){ console.error('POST', e); return null; }
   }
 
+  // ══════════ SAVES: did it work? ══════════
+  // sheetPost RESOLVES with {error:…} on failure; it never throws. So every write
+  // checks saveFailed(r) and, if it failed, puts the screen back the way it was.
+  // An "Unknown action" error means Apps Script is on an older version than this page.
+  function saveFailed(r){ return !r || !!r.error || r.success === false; }
+  function isOldBackend(r){ return !!r && /unknown action/i.test(String(r.error || '')); }
+  function saveFailMsg(r, msg){ return isOldBackend(r) ? 'Backend needs redeploying' : msg; }
+
   // ══════════ TOAST + UNDO ══════════
   // Replaces confirm() everywhere. Destructive actions apply immediately and
   // offer an undo window, which is both faster and safer than a modal.
@@ -837,7 +877,7 @@
   // v3.7 macro foundation. `ingredients` is fetched once and cached — 560 rows of
   // static lab data has no business on a 30-second poll — while measures/recipes
   // ride the sync batch because they are small and do change.
-  let ingredients = [], ingIndex = {}, measures = [], recipes = [];
+  let ingredients = [], ingIndex = {}, measures = [];
   // v4.7. The dish universe. Every portion number on screen comes from here:
   // how heavy a katori of this dish is, and its macros per 100 g. Both are
   // calculated in the library sheet, so nothing is stored or guessed locally.
@@ -856,7 +896,7 @@
     if (!hh || !hh.settings){
       // Apps Script still on the previous version answers "unknown action". Degrade
       // to device-local behaviour rather than blocking the whole sync.
-      householdBackendMissing = !!(hh && /unknown action/i.test(String(hh.error||'')));
+      householdBackendMissing = isOldBackend(hh);
       return;
     }
     householdBackendMissing = false;
@@ -887,7 +927,9 @@
   }
 
   async function syncAll(silent){
-    if (syncing) return;
+    // v4.25. After a wrong PIN / unknown kitchen the gate is up: no more polling (each poll was a
+    // wasted Apps Script run) until the person joins again (joinHh clears authShown).
+    if (syncing || authShown) return;
     syncing = true;
     if (!silent) setSyncLabel('syncing…');
     try {
@@ -903,7 +945,7 @@
       // v4.13. A wrong PIN or unknown household is an ANSWER, not a network failure. It used
       // to fall through to the 11-GET fallback, every one of which also failed quietly, so
       // the screen kept showing whatever was cached and nothing said why.
-      if (all && /bad pin|unknown household|session expired|sign in required|not a member/i.test(String(all.error || ''))){
+      if (all && /bad pin|unknown household|session expired|sign in required|not a member|too many wrong|household required/i.test(String(all.error || ''))){
         authFailed(String(all.error));
         return;
       }
@@ -953,7 +995,7 @@
       if (cn && cn.items){
         const before = cookNext.map(x=>x.id).join(',');
         cookNext = cn.items;
-        if (cookNext.map(x=>x.id).join(',') !== before && pages.length){
+        if (cookNext.map(x=>x.id).join(',') !== before && pages.length && !menuIsPersonal){
           const cur = sharedFor(activeSlot());
           if (cur.length){
             const keepIdx = pageIdx;
@@ -975,7 +1017,7 @@
           date: menuDay(m.date), slot: String(m.slot||'').trim().toLowerCase(),
           qty: m.qty == null ? null : +m.qty, measure: m.measure || '', note: m.note || '' }));
         menuBackendMissing = false;
-      } else if (mn && /unknown action/i.test(String(mn.error||''))){
+      } else if (isOldBackend(mn)){
         menuBackendMissing = true;
       }
       if (pl && Array.isArray(pl.plans)){
@@ -991,7 +1033,7 @@
       if (wl && Array.isArray(wl.wishlist)){
         wishlist = wl.wishlist;
         wishlistBackendMissing = false;
-      } else if (wl && /unknown action/i.test(String(wl.error||''))){
+      } else if (isOldBackend(wl)){
         wishlistBackendMissing = true;      // say so instead of failing silently
       }
 
@@ -1147,12 +1189,13 @@
     // A tab left open through the afternoon shouldn't still be suggesting breakfast.
     setInterval(()=>{
       if (document.visibilityState !== 'visible') return;
-      if (!slotOverride && lastSlot && mealSlot() !== lastSlot) loadMenu(true);
+      // v4.25. Not forced: a new meal shows the house menu if a flatmate already built it.
+      if (!slotOverride && lastSlot && mealSlot() !== lastSlot) loadMenu();
     }, 60000);
     document.addEventListener('visibilitychange', ()=>{
       if (document.visibilityState==='visible'){
         syncAll(true);
-        if (!slotOverride && lastSlot && mealSlot() !== lastSlot) loadMenu(true);
+        if (!slotOverride && lastSlot && mealSlot() !== lastSlot) loadMenu();
       }
     });
   }
@@ -1168,7 +1211,39 @@
   // simply not being deployed yet. Shipping the HTML before claude-stream.mjs
   // therefore degrades to the old speed rather than to a broken menu.
   const STREAM_API = '/api/claude-stream';
-  let streamBroken = false;   // one failure is enough; stop retrying it all session
+  // v4.25. A failed stream used to switch streaming off for the whole session, so one
+  // overload made every later menu slower. Now it is skipped for 10 minutes, then tried again.
+  let streamBrokenAt = 0;
+  const STREAM_RETRY_MS = 10 * 60 * 1000;
+  // v4.25. Every Claude call says what it is for (menu, dish-learn, cook-order…). The proxy
+  // logs tokens and cost per purpose, so /api/usage can show where the money goes. Sent as a
+  // header, not a body field: an older proxy ignores it instead of forwarding it to Anthropic.
+  function claudeHeaders(purpose){
+    const h = { 'Content-Type':'application/json' };
+    if (purpose) h['x-nos-purpose'] = String(purpose);
+    return h;
+  }
+  // A household at its daily limit gets the same answer from both endpoints, so falling back
+  // from the stream to the buffered call would only repeat the refusal. This error says "stop".
+  // v4.25 (Phase 1). The proxy now also refuses a request it can't match to a kitchen (401, 403): that
+  // too is an answer, not an outage, so the buffered retry (which would be refused the same way)
+  // is skipped. `capped` stays true only for the daily limit, which has its own card.
+  function capError(r, body){
+    const msg = (body && body.error && (body.error.message || body.error)) ||
+      (r.status === 429 ? "That's today's limit for this household." : 'The Claude proxy refused this request.');
+    const e = new Error(String(msg) + ' (HTTP ' + r.status + ')');
+    e.capped = r.status === 429;
+    e.stop = true;
+    return e;
+  }
+  // Who is asking. The proxy checks the kitchen (house name + PIN, or the Google sign-in) with the
+  // Sheet backend before spending anything, so every Claude call carries the same identity a Sheet call does.
+  function claudeWho(){
+    const w = { hh:HH, pin:HH_PIN };
+    if (SESS) w.sess = SESS;
+    return w;
+  }
+  const isRefusal = s => s === 429 || s === 401 || s === 403;
 
   // Pulls complete top-level objects out of a partial JSON array. Brace counting
   // has to respect strings and escapes or a dish whose name contains a brace, or
@@ -1199,14 +1274,16 @@
     return { objects: out, next: start >= 0 ? start : (depth === 0 ? i : from) };
   }
 
-  async function askJSONStream(prompt, maxTokens, onObject){
-    if (streamBroken) throw new Error('stream unavailable');
+  async function askJSONStream(prompt, maxTokens, onObject, purpose){
+    if (streamBrokenAt && Date.now() - streamBrokenAt < STREAM_RETRY_MS) throw new Error('stream unavailable');
     const r = await fetch(STREAM_API, {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ tier:'smart', hh:HH, max_tokens:maxTokens||900,
+      method:'POST', headers:claudeHeaders(purpose),
+      body: JSON.stringify({ tier:'smart', ...claudeWho(), max_tokens:maxTokens||900,
         messages:[{ role:'user', content: prompt + '\n\nRespond with JSON only. No prose, no markdown fences.' }] })
     });
-    if (!r.ok || !r.body){ streamBroken = true; throw new Error('stream unavailable'); }
+    if (isRefusal(r.status)){ let b = null; try { b = await r.json(); } catch(e){} throw capError(r, b); }
+    if (!r.ok || !r.body){ streamBrokenAt = Date.now(); throw new Error('stream unavailable'); }
+    streamBrokenAt = 0;
 
     const reader = r.body.getReader();
     const dec = new TextDecoder();
@@ -1235,10 +1312,10 @@
     return seen;
   }
 
-  async function askClaude(prompt, maxTokens, tier){
+  async function askClaude(prompt, maxTokens, tier, purpose){
     const r = await fetch(CLAUDE_API, {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ tier:tier||'smart', hh:HH, max_tokens:maxTokens||900, messages:[{role:'user',content:prompt}] })
+      method:'POST', headers:claudeHeaders(purpose),
+      body: JSON.stringify({ tier:tier||'smart', ...claudeWho(), max_tokens:maxTokens||900, messages:[{role:'user',content:prompt}] })
     });
     // v4.9. The reason used to be lost here: a string `error` (the proxy's own, e.g.
     // "API key not configured") has no .message, and a non-JSON reply (a 404 page when
@@ -1250,12 +1327,13 @@
     if (d && d.error){
       const why = typeof d.error === 'string' ? d.error
                 : (d.error.message || d.error.type || 'Claude unavailable');
+      if (isRefusal(r.status)) throw capError(r, d);
       throw new Error(why + ' (HTTP ' + r.status + ')');
     }
     return ((d && d.content)||[]).map(b=>b.text||'').join('');
   }
-  async function askJSON(prompt, maxTokens, tier){
-    const raw = await askClaude(prompt + '\n\nRespond with JSON only. No prose, no markdown fences.', maxTokens, tier);
+  async function askJSON(prompt, maxTokens, tier, purpose){
+    const raw = await askClaude(prompt + '\n\nRespond with JSON only. No prose, no markdown fences.', maxTokens, tier, purpose);
     const clean = raw.replace(/```json|```/g,'').trim();
     const start = Math.min(...[clean.indexOf('{'), clean.indexOf('[')].filter(i=>i>=0));
     return parseLooseJSON(clean.slice(isFinite(start)?start:0));
@@ -1266,7 +1344,7 @@
   // them need Sonnet's judgement and all of them are on paths people wait for, so
   // the cheaper, faster model is the better answer twice over. Menu choice, meal
   // planning, recipes and teaching the cook a new dish stay on askJSON.
-  async function askFast(prompt, maxTokens){ return askJSON(prompt, maxTokens, 'fast'); }
+  async function askFast(prompt, maxTokens, purpose){ return askJSON(prompt, maxTokens, 'fast', purpose); }
 
   // ══════════ INSTRUMENTATION (v4.0) ══════════
   // Fire and forget, never awaited, never allowed to throw into a caller: an
@@ -1414,7 +1492,7 @@
       // Not an answer. Forget the attempt so a later pass retries, unless the backend simply
       // predates this action, in which case stop asking.
       batch.forEach(t => { delete resolveCache[t.toLowerCase()]; });
-      if (r && /unknown action/i.test(String(r.error||''))) resolveBackendMissing = true;
+      if (isOldBackend(r)) resolveBackendMissing = true;
       return 0;
     }
     let healed = 0;
@@ -1658,10 +1736,10 @@
                             dish:name, addedBy:activePerson });
     } catch(e){ r = null; }
 
-    if (!r || r.error || r.success === false){
+    if (saveFailed(r)){
       wishlist = prev;                      // put the heart back where it was
       renderMenu(); renderWishlist();
-      const unknown = r && /unknown action/i.test(String(r.error||''));
+      const unknown = isOldBackend(r);
       wishlistBackendMissing = !!unknown;
       renderWishlist();
       toast(unknown
@@ -1981,10 +2059,10 @@
     // being materialised and a swap being applied — machinery, not a person choosing.
     logEv('menu_add', items.map(i => i.dish).filter(Boolean).join(', ').slice(0, 120));
     const r = await sheetPost({ action:'addMenuItems', addedBy:activePerson, items:items });
-    if (!r || r.error || r.success === false){
+    if (saveFailed(r)){
       menuBoard = snapshot;
       renderMenuBoard();
-      toast(/unknown action/i.test(String((r||{}).error||'')) ? 'Backend needs redeploying' : "Couldn't add that");
+      toast(saveFailMsg(r, "Couldn't add that"));
       return;
     }
     // A dish added to a slot that has already ended is not a plan, it's a record of
@@ -2255,10 +2333,10 @@
       const r = await askFast(
         `Someone in a ${REGIONS[region()].name} household likes: ${liked.join(', ')}.\n` +
         `Suggest 5 more everyday Indian foods they would probably also like — dishes a home ` +
-        `cook actually makes, or ingredients, named the way a Delhi household would say them.\n` +
+        `cook actually makes, or ingredients, named the way ${REGIONS[region()].house} would say them.\n` +
         `Do NOT suggest any of these, they are already offered: ${exclude.join(', ')}.\n` +
         `No restaurant, fusion or foreign dishes. No invented names.\n` +
-        `Return an array of {name, kind} where kind is "dish" or "ingredient".`, 400);
+        `Return an array of {name, kind} where kind is "dish" or "ingredient".`, 400, 'taste-expand');
       if (Array.isArray(r)){
         const have = {};
         TASTE_SEED.dish.concat(TASTE_SEED.ingredient).forEach(x=>have[x.toLowerCase()]=1);
@@ -2289,10 +2367,10 @@
     // Only the fields this screen owns are sent; the backend preserves the rest, so
     // saving taste can't wipe a diet or an allergy set on another screen.
     const r = await sheetPost({ action:'savePreferences', person:person, picks:taste, likes:free });
-    if (!r || r.error || r.success === false){
+    if (saveFailed(r)){
       p.picks = before.picks; p.likes = before.likes;
       saveLocal(); renderYou();
-      toast(/unknown action/i.test(String((r||{}).error||'')) ? 'Backend needs redeploying' : "Couldn't save that");
+      toast(saveFailMsg(r, "Couldn't save that"));
       return;
     }
     toast('Saved');
@@ -2547,11 +2625,10 @@
     for (const w of writes){
       const r = await sheetPost({ action:'updateMenuPortion', date, slot, dish,
         person:w.person, qty:w.qty, measure:w.measure, note:noteVal, includeLogged:eaten });
-      if (!r || r.error || r.success === false){
+      if (saveFailed(r)){
         menuBoard = snapshot;
         renderMenuBoard(); renderToday();
-        toast(/unknown action/i.test(String((r||{}).error||''))
-          ? 'Backend needs redeploying' : "Couldn't save that portion");
+        toast(saveFailMsg(r, "Couldn't save that portion"));
         return;
       }
     }
@@ -2599,11 +2676,6 @@
       g.someEaten = g.rows.some(r => (r.status||'open') === 'logged');
     });
     return out;
-  }
-  function onMenu(dish, person, date, slot){
-    const k = String(dish).trim().toLowerCase();
-    return menuRowsFor(date || menuDate(), slot || menuSlot())
-      .some(m => m.dish.trim().toLowerCase() === k && m.person === person);
   }
 
   function renderMenuBoard(){
@@ -2774,10 +2846,10 @@
     optimistic();
     renderMenuBoard();
     const r = await sheetPost(body);
-    if (!r || r.error || r.success === false){
+    if (saveFailed(r)){
       menuBoard = snapshot;
       renderMenuBoard();
-      toast(/unknown action/i.test(String((r||{}).error||'')) ? 'Backend needs redeploying' : "Couldn't save that");
+      toast(saveFailMsg(r, "Couldn't save that"));
       return false;
     }
     syncAll(true);
@@ -2825,7 +2897,7 @@
       const res = await sheetPost({ action:'removeMenuItem', id:r.id, dish:r.dish,
                                     date:r.date, slot:r.slot, person:r.person,
                                     force:(r.status||'open') === 'logged' });
-      if (!res || res.error || res.success === false){
+      if (saveFailed(res)){
         menuBoard = snapshot; mealLog = snapMeals;
         renderMenuBoard(); renderToday(); toast("Couldn't remove that"); return;
       }
@@ -2966,10 +3038,10 @@
     mealPlans[activePerson].mode = mode;
     renderPlanCard();
     const r = await sheetPost({ action:'setPlanMode', person:activePerson, mode:mode });
-    if (!r || r.error || r.success === false){
+    if (saveFailed(r)){
       mealPlans[activePerson].mode = prev;
       renderPlanCard();
-      toast(/unknown action/i.test(String((r||{}).error||'')) ? 'Backend needs redeploying' : "Couldn't save that");
+      toast(saveFailMsg(r, "Couldn't save that"));
       return;
     }
     // Switching to daily stops the plan filling the menu, but leaves today alone —
@@ -3068,7 +3140,7 @@
         `  pt = portion for ONE person, with numbers and Indian units ` +
         `(e.g. "2 roti + 1 katori dal", "1 plate, ~200 g", "3 eggs")\n` +
         `  k, p, c, f, fb = calories, protein, carbs, fat, fibre in grams for THAT portion`,
-        Math.min(8000, 700 + days * slots.length * 90));
+        Math.min(8000, 700 + days * slots.length * 90), 'smart', 'plan');
       if (!Array.isArray(r) || !r.length) throw new Error('empty');
       planDraft = {
         person: person, days: days, repeatGap: gap, notes: notes, slots: slots,
@@ -3112,7 +3184,6 @@
       fib:  num(v.fb != null ? v.fb : v.fib)
     };
   }
-  function planSlotDish(v){ return normalisePlanSlot(v).dish; }
 
   // Totals for one planned day. Falls back to the shared dish library when the plan
   // itself has no numbers for a slot (an old plan, or a dish edited by hand), and
@@ -3174,7 +3245,7 @@
         `${regionFood().food}.\n` +
         `Return an array of {day, ${slotList.map(sl=>sl+': {d, pt, k, p, c, f, fb}').join(', ')}} ` +
         `for ONLY the days listed, where day is the 1-based number shown above.`,
-        Math.min(6000, 500 + off.length * slotList.length * 90));
+        Math.min(6000, 500 + off.length * slotList.length * 90), 'smart', 'plan-repair');
       if (!Array.isArray(r)) return;
       r.forEach(fix=>{
         const idx = (+fix.day || 0) - 1;
@@ -3219,7 +3290,7 @@
           `Portions must use Indian household units with a number ` +
           `("2 roti + 1 katori dal", "1 plate, ~200 g", "3 eggs").\n` +
           `Return an array of {d, pt, k, p, c, f, fb} — dish, portion, then calories, ` +
-          `protein, carbs, fat and fibre in grams.`, 1600);
+          `protein, carbs, fat and fibre in grams.`, 1600, 'plan-portions');
         (Array.isArray(r) ? r : []).forEach(x=>{
           const s = normalisePlanSlot(x);
           if (s.dish) priced[s.dish.toLowerCase()] = s;
@@ -3472,7 +3543,7 @@
         `fusion dishes, no invented names.\n` +
         `Return an array of 3 objects {d, pt, k, p, c, f, fb, why} — dish, a single-person ` +
         `portion in Indian household units with a number, then calories, protein, carbs, ` +
-        `fat and fibre in grams for THAT portion, and "why" in under 10 words.`, 900);
+        `fat and fibre in grams for THAT portion, and "why" in under 10 words.`, 900, 'smart', 'plan-swap');
       swapOpts = Array.isArray(r) ? r.slice(0,3) : [];
     } catch(e){ swapOpts = []; }
     if (swapSlot === slot) renderSlotSwap();
@@ -3622,8 +3693,7 @@
       plan:p.plan, slots:p.slots, status:'active' });
     const added = await sheetPost({ action:'addMenuItems', addedBy:person, items:items });
     if (!saved || saved.error || !added || added.error){
-      toast(/unknown action/i.test(String((saved||added||{}).error||''))
-        ? 'Backend needs redeploying' : "Couldn't save the plan");
+      toast(saveFailMsg(saved || added, "Couldn't save the plan"));
       return;
     }
     mealPlans[person] = { person:person, mode:'fixed', startDate:p.startDate, days:p.plan.length,
@@ -3632,23 +3702,8 @@
     saveLocal();
     await syncAll(true);
     toast(`${p.plan.length}-day menu is live`);
-    // Seed the shared library with the plan's own estimates for any dish it doesn't
-    // already know. Without this the plan says 520 kcal and the day card says nothing,
-    // because auto-logging reads DishLibrary, not the plan. Costs no Claude call — the
-    // numbers already came back with the plan — and the backend refuses to overwrite a
-    // hand-confirmed row, so a correction made later always wins.
-    seedLibraryFromPlan(p);
     suggestPlanShopping(items);
   }
-
-  // v4.8. Was: take the macros Claude guessed while drafting a meal plan and write
-  // them into the library as fact. That is exactly backwards now — the library
-  // computes macros from ingredients, and a guessed number written over a formula
-  // would kill the self-correction permanently.
-  //
-  // Kept as a no-op rather than deleted so the three call sites read unchanged. A
-  // dish the library does not know is added properly through addDishToLibrary.
-  function seedLibraryFromPlan(p){ return; }
 
   // ── What to buy for it ──
   // The plan's real second job: knowing on Sunday what Thursday needs. Deliberately
@@ -3666,7 +3721,7 @@
         `The kitchen currently has: ${inventory.map(i=>i.name+' ('+i.qty+')').join(', ') || 'nothing'}.\n` +
         `Return an array of {item, qty, cat} for staples that are missing or will run out. ` +
         `8-14 items, Indian groceries, cat from: Proteins, Vegetables, Dairy & bread, Grains, ` +
-        `Fruits, Spices, Oils & condiments, Beverages.`, 700);
+        `Fruits, Spices, Oils & condiments, Beverages.`, 700, 'plan-shopping');
       if (!Array.isArray(r) || !r.length){ closeSheet(); return; }
       const byCat = {};
       r.forEach(i=>{ (byCat[i.cat||'Other'] = byCat[i.cat||'Other']||[]).push(i); });
@@ -3807,7 +3862,7 @@
         `tomorrow's cooking is possible: ${items.map(i=>i.dish+' — '+i.note).join('; ')}.\n` +
         `One line each, everyday spoken ${lang.name}, digits for all times and quantities. ` +
         `Say it as something to do now, tonight, not tomorrow.\n` +
-        `Return {title, lines} where title is a short ${lang.name} phrase meaning "for tonight" and lines is an array of strings.`, 400);
+        `Return {title, lines} where title is a short ${lang.name} phrase meaning "for tonight" and lines is an array of strings.`, 400, 'cook-prep');
       if (r && Array.isArray(r.lines) && r.lines.length){
         orderLines = r.lines;
         renderCookSheet(r.title || 'आज रात', lang, items.map(i=>({ dish:i.dish, for:i.for })), { noTeach:true });
@@ -4047,10 +4102,10 @@
     renderToday();
     const r = await sheetPost({ action:'updateMealLog', logId:logId,
                                 mealName:dish, loggedBy:who, mealType:slot });
-    if (!r || r.error || r.success === false){
+    if (saveFailed(r)){
       if (idx >= 0 && snapshot) mealLog[idx] = snapshot;
       renderToday();
-      toast(/unknown action/i.test(String((r||{}).error||'')) ? 'Backend needs redeploying' : "Couldn't save that");
+      toast(saveFailMsg(r, "Couldn't save that"));
       return;
     }
     if (dish) scheduleHeal();
@@ -4069,11 +4124,11 @@
       ? Object.assign({}, m, { status:'open', logId:'' }) : m);
     renderToday();
     const r = await sheetPost({ action:'deleteMealLog', logId:logId });
-    if (!r || r.error || r.success === false){
+    if (saveFailed(r)){
       mealLog = snapshot;
       menuBoard = menuSnap;
       renderToday();
-      toast(/unknown action/i.test(String((r||{}).error||'')) ? 'Backend needs redeploying' : "Couldn't remove that");
+      toast(saveFailMsg(r, "Couldn't remove that"));
       return;
     }
     toast('Removed');
@@ -4148,7 +4203,7 @@
                             closeMenuRow:true, menuDate:today() });
           // v4.21. sheetPost RESOLVES with {error}; it never throws. An unchecked failure left the
           // meal on screen for a few minutes and then it silently vanished on the next sync.
-          if (!r || r.error || r.success === false){
+          if (saveFailed(r)){
             failed.push(person);
             pendingMeals = pendingMeals.filter(m => !(m.dish === dish && m.by === person && added.indexOf(m) > -1));
             continue;
@@ -4185,16 +4240,6 @@
   document.addEventListener('visibilitychange', ()=>{
     if (document.visibilityState === 'hidden') flushDeferred();
   });
-
-  // v4.11. A NO-OP, kept so its callers need no change. It used to ask Claude for macros
-  // for every dish the library did not know, on every app open, and kept the answer only in
-  // memory where nothing reads it: the Today bar computes from the library alone. So it
-  // spent Claude calls, and daily cap, on numbers that were thrown away, and it
-  // contradicted the rule that macros come only from the dish list. An unknown dish is now
-  // matched to a known one (resolveNames) and never estimated into thin air.
-  async function estimateMacros(dish){
-    return dishInfo[String(dish||'').trim().toLowerCase()] || null;
-  }
 
   function openLogSheet(){
     const others = Object.keys(members).filter(n=>n!==activePerson);
@@ -4344,38 +4389,6 @@
     return { ing:null, confidence:'none' };
   }
 
-  // Rewrite one entry line to its canonical food name, keeping the quantity intact.
-  // Returns the line unchanged when nothing resolves — a line the resolver doesn't
-  // recognise is far more likely to be a real food it hasn't got than a mistake,
-  // and silently dropping it would lose stock.
-  function canonLine(line){
-    const s = String(line||'').trim();
-    if (!s) return s;
-    // Split the quantity off the same way commitKitchen does, so canonicalising
-    // and parsing can't disagree about where the name ends.
-    let name = s, qty = '';
-    const m = s.match(/^(.*?)[\s\-–:]*([\d.]+\s*(?:kg|g|l|ml|pcs?|pieces?|packs?|dozen)?)\s*$/i);
-    const m2 = s.match(/^([\d.]+\s*(?:kg|g|l|ml|pcs?|pieces?|packs?|dozen)?)\s+(.*)$/i);
-    if (m && m[1].trim()){ name = m[1].trim(); qty = m[2].trim(); }
-    else if (m2){ name = m2[2].trim(); qty = m2[1].trim(); }
-    const r = resolveIng(name);
-    if (!r || !r.ing) return s;
-    return r.ing.name + (qty ? ' ' + qty : '');
-  }
-
-  // Canonicalise a whole block and report what changed, so the rewrite is visible
-  // rather than something the app did to your stock behind your back.
-  function canonBlock(text){
-    const lines = String(text||'').split('\n');
-    const changes = [];
-    const out = lines.map(l => {
-      const c = canonLine(l);
-      if (c !== l.trim() && l.trim()) changes.push({ from:l.trim(), to:c });
-      return c;
-    });
-    return { text: out.join('\n'), changes };
-  }
-
   // ══════════ MISSING INGREDIENTS (v4.21) ══════════
   // For a suggested dish: what would one basic portion for the whole house need, and what of
   // that is not on the shelf (or not enough of it)? Library dishes only: a dish with no
@@ -4481,11 +4494,10 @@
       </div>`;
   }
 
-  // ══════════ MACRO SETUP (v3.8) ══════════
-  // A one-time-ish maintenance screen, deliberately not a tab: seeding the
-  // ingredient tables, merging the duplicated inventory rows, and drafting the
-  // top-20 recipes are things done once and then rarely. Putting them in the nav
-  // would spend permanent screen real estate on a job that ends.
+  // ══════════ INGREDIENT LIBRARY (client copy) ══════════
+  // The shared Ingredients table, fetched once per session (it is static lab data).
+  // v4.23 removed the old Macro-setup and recipe-editor screens that used to live here:
+  // the shared library is edited by the owner only (see HANDOFF, "Owner process").
 
   async function loadIngredients(force){
     // 560 static rows. Fetched once per session and held — putting this on the
@@ -4499,362 +4511,11 @@
     return ingredients;
   }
 
-  function openMacroSetup(){
-    openSheet(`
-      <h2>Macro data</h2>
-      <p class="muted" style="margin:8px 0 16px;">One-time setup. Run these in order.</p>
-      <div id="ms-status" class="muted" style="margin-bottom:14px;"></div>
-      <div class="btn-row" style="flex-direction:column;gap:8px;">
-        <button onclick="msSeed()">1 · Load ingredient tables</button>
-        <button onclick="msCanonicalise()">2 · Merge duplicate stock</button>
-        <button onclick="msRecipes()">3 · Draft top-20 recipes</button>
-        <button onclick="msArchive()">4 · Archive old estimates</button>
-      </div>
-      <div class="btn-row" style="margin-top:16px;">
-        <button onclick="closeSheet()">Done</button>
-      </div>`);
-    msStatus('');
-  }
-  function msStatus(msg){
-    const el = document.getElementById('ms-status');
-    if (el) el.innerHTML = msg;
-  }
-
-  // Step 1. The CSVs ship alongside the app rather than being pasted by hand —
-  // 560 rows through a textarea is a data-entry job nobody should do twice.
-  async function msSeed(){
-    msStatus('Loading ingredient tables<span class="dots"></span>');
-    try {
-      const [ingCsv, mCsv] = await Promise.all([
-        fetch('Ingredients-seed.csv').then(r=>r.text()),
-        fetch('Measures-seed.csv').then(r=>r.text())
-      ]);
-      const ingRows = parseSeedCSV(ingCsv);
-      const mRows   = parseSeedCSV(mCsv);
-      // Posted in chunks: one payload of 560 rows risks the Apps Script limit,
-      // and a half-written table is worse than a slow one.
-      const a = await sheetPost({ action:'seedTable', sheet:'Ingredients', rows:ingRows });
-      const b = await sheetPost({ action:'seedTable', sheet:'Measures',    rows:mRows });
-      await loadIngredients(true);
-      msStatus(`Loaded ${(a&&a.written)||0} ingredients, ${(b&&b.written)||0} measures` +
-               (b && b.preserved ? ` — kept ${b.preserved} weighed value(s)` : ''));
-    } catch(e){ msStatus('Could not load the CSVs. Are they next to index.html?'); }
-  }
-
-  function parseSeedCSV(text){
-    const lines = String(text||'').trim().split('\n');
-    const out = [];
-    for (let i=1;i<lines.length;i++){
-      const l = lines[i]; if (!l.trim()) continue;
-      const v=[]; let cur='', q=false;
-      for (const ch of l){
-        if (q){ if (ch==='"') q=false; else cur+=ch; }
-        else if (ch==='"') q=true;
-        else if (ch===','){ v.push(cur); cur=''; }
-        else cur+=ch;
-      }
-      v.push(cur);
-      out.push(v);
-    }
-    return out;
-  }
-
-  // Step 2. Preview first, always. Rewriting the whole kitchen on a bad match is
-  // not something to find out about afterwards.
-  async function msCanonicalise(){
-    msStatus('Checking stock<span class="dots"></span>');
-    const p = await sheetPost({ action:'canonicaliseInventory' });
-    if (!p || !p.preview){ msStatus('Could not read the inventory.'); return; }
-    if (!p.wouldMerge.length){
-      msStatus(`Nothing to merge — ${p.rowsBefore} rows, all distinct.` +
-        (p.unresolved.length ? `<br>${p.unresolved.length} not recognised as food (that's fine).` : ''));
-      return;
-    }
-    msStatus(
-      `<b>${p.rowsBefore} rows → ${p.rowsAfter}</b><br>` +
-      p.wouldMerge.slice(0,8).map(m=>`${esc(m.from.join(' + '))} → <b>${esc(m.into)}</b>`).join('<br>') +
-      (p.wouldMerge.length>8 ? `<br>…and ${p.wouldMerge.length-8} more` : '') +
-      `<div class="btn-row" style="margin-top:12px;">
-         <button class="btn-primary" onclick="msCanonApply()">Merge them</button>
-       </div>`);
-  }
-  async function msCanonApply(){
-    msStatus('Merging<span class="dots"></span>');
-    const r = await sheetPost({ action:'canonicaliseInventory', apply:true });
-    msStatus(r && r.success ? `Merged. ${r.rowsBefore} rows → ${r.rowsAfter}.` : 'Merge failed.');
-    syncAll(true);
-  }
-
-  // Step 3. Claude drafts all 20, then one approval sitting.
-  let draftRecipes = [];
-  async function msRecipes(){
-    msStatus('Finding your most-cooked dishes<span class="dots"></span>');
-    const top = await sheetPost({ action:'getTopDishes', limit:20 });
-    const dishes = ((top && top.dishes) || []).filter(d => !d.hasRecipe);
-    if (!dishes.length){ msStatus('Every top dish already has a recipe.'); return; }
-    await loadIngredients();
-    if (!ingredients.length){ msStatus('Load the ingredient tables first (step 1).'); return; }
-
-    msStatus(`Drafting ${dishes.length} recipes<span class="dots"></span>`);
-    // The model is constrained to the ingredient vocabulary it is given. Letting it
-    // invent an ingredient name would produce a recipe that computes to nothing,
-    // which is exactly the unverifiable-guess problem this replaces.
-    const vocab = ingredients.filter(i=>i.common==='yes')
-      .map(i=>`${i.id}=${i.name}`).join(', ');
-    draftRecipes = [];
-    for (const d of dishes){
-      try {
-        const r = await askJSON(
-          `Indian home cooking. Give the ingredients for "${d.dish}" for 4 people.\n` +
-          `Use ONLY these ingredient codes: ${vocab}\n` +
-          `Return {"items":[{"ing":"CODE","g":RAW_GRAMS}],"yieldGrams":COOKED_WEIGHT_TOTAL,"servings":4}\n` +
-          `g is the RAW weight going into the pot. yieldGrams is what comes out after ` +
-          `cooking (rice roughly triples, dal absorbs water, sabzi loses some). ` +
-          `Include cooking oil. Omit salt and water.`, 700);
-        if (r && Array.isArray(r.items) && r.items.length){
-          r.items = r.items.filter(it => ingIndex[it.ing] && +it.g > 0);
-          draftRecipes.push({ dish:d.dish, dishID:d.dishID || d.dish.toLowerCase(),
-                              items:r.items, yieldGrams:+r.yieldGrams||0, servings:+r.servings||4 });
-        }
-      } catch(e){ /* one bad draft must not sink the batch */ }
-      msStatus(`Drafted ${draftRecipes.length}/${dishes.length}<span class="dots"></span>`);
-    }
-    if (!draftRecipes.length){ msStatus('No drafts came back. Try again.'); return; }
-    renderRecipeApproval();
-  }
-
-  function recipeMacros(rec){
-    let kcal=0,p=0,c=0,f=0,fib=0;
-    (rec.items||[]).forEach(it=>{
-      const g = ingIndex[it.ing]; if (!g) return;
-      const k = (+it.g||0)/100;
-      kcal+=g.kcal*k; p+=g.p*k; c+=g.c*k; f+=g.f*k; fib+=g.fib*k;
-    });
-    const s = Math.max(1, +rec.servings||1);
-    return { kcal:Math.round(kcal/s), p:Math.round(p/s), c:Math.round(c/s),
-             f:Math.round(f/s), fib:Math.round(fib/s) };
-  }
-
-  // One sitting: every draft on screen with its computed per-serving macros, so
-  // an implausible one is visible at a glance rather than after a week of logs.
-  // Each row opens an editor — approve-or-skip alone meant a recipe that was 90%
-  // right had to be thrown away whole.
-  function renderRecipeApproval(){
-    openSheet(`
-      <h2>Approve recipes</h2>
-      <p class="muted" style="margin:8px 0 4px;">
-        ${draftRecipes.length} drafts. Per-serving macros are computed from the
-        ingredients, not guessed — if a number looks wrong, the grams are wrong.
-        Tap one to fix it.
-      </p>
-      <div style="max-height:52vh;overflow:auto;margin:12px 0;">
-        ${draftRecipes.map((r,i)=>{
-          const m = recipeMacros(r);
-          return `<div style="padding:10px 0;border-bottom:0.5px solid var(--border);">
-            <div class="row" style="gap:10px;align-items:flex-start;">
-              <input type="checkbox" id="rx-${i}" ${r.skip?'':'checked'} style="margin-top:3px;">
-              <span style="flex:1;" onclick="editRecipe(${i})">
-                <b>${esc(r.dish)}</b>
-                <span class="mono" style="display:block;font-size:12px;color:var(--text3);margin-top:2px;">
-                  ${m.kcal} kcal · ${m.p}g P · ${m.c}g C · ${m.f}g F
-                  ${r.yieldGrams ? '' : ' · <span style="color:var(--mirch);">no yield — saves as draft</span>'}
-                </span>
-                <span style="display:block;font-size:11px;color:var(--text3);margin-top:3px;">
-                  ${esc(r.items.map(it=>(ingIndex[it.ing]?ingIndex[it.ing].name:it.ing)+' '+it.g+'g').join(', '))}
-                </span>
-              </span>
-              <button style="padding:4px 10px;font-size:12px;" onclick="editRecipe(${i})">Edit</button>
-            </div>
-          </div>`;
-        }).join('')}
-      </div>
-      <div class="btn-row">
-        <button onclick="openMacroSetup()">Back</button>
-        <button class="btn-primary" onclick="msSaveRecipes()">Save checked</button>
-      </div>`);
-  }
-
-  // ── Recipe editor ──────────────────────────────────────────────────────────
-  // Grams, servings and yield are all editable, and the macros recompute on every
-  // keystroke. That live feedback is the point: the only way to tell a good recipe
-  // from a bad one is to see what the numbers do when you change a quantity.
-  let editIdx = -1;
-
-  // Leaving the approval list destroys its checkboxes, so their state is captured
-  // onto the drafts first. Without this, unchecking three bad recipes and then
-  // opening a fourth to fix it silently re-checks all three — and they get saved.
-  function captureChecks(){
-    draftRecipes.forEach((r,i)=>{
-      const el = document.getElementById('rx-'+i);
-      if (el) r.skip = !el.checked;
-    });
-  }
-
-  function editRecipe(i){
-    captureChecks();
-    editIdx = i;
-    const r = draftRecipes[i];
-    if (!r) return;
-    openSheet(`
-      <h2>${esc(r.dish)}</h2>
-      <div id="re-macros" class="mono" style="font-size:13px;color:var(--text3);margin:6px 0 14px;"></div>
-
-      <div class="row" style="gap:10px;margin-bottom:12px;">
-        <div class="field" style="flex:1;margin:0;">
-          <label>Serves</label>
-          <input class="mono" id="re-servings" type="number" min="1" value="${+r.servings||4}"
-                 oninput="reRecalc()">
-        </div>
-        <div class="field" style="flex:1;margin:0;">
-          <label>Cooked weight (g)</label>
-          <input class="mono" id="re-yield" type="number" min="0" value="${+r.yieldGrams||0}"
-                 oninput="reRecalc()" placeholder="0 = draft">
-        </div>
-      </div>
-
-      <div class="eyebrow" style="margin-bottom:6px;">Raw ingredients</div>
-      <div id="re-items" style="max-height:34vh;overflow:auto;"></div>
-
-      <div class="field" style="margin-top:12px;">
-        <label>Add an ingredient</label>
-        <input id="re-add" placeholder="paneer, toor dal, ghee…"
-               onkeydown="if(event.key==='Enter'){reAdd();return false;}">
-        <div id="re-add-hint" class="tiny" style="margin-top:4px;color:var(--text3);"></div>
-      </div>
-
-      <div class="btn-row" style="margin-top:14px;">
-        <button onclick="renderRecipeApproval()">Back</button>
-        <button class="btn-primary" onclick="reCommit()">Keep changes</button>
-      </div>`);
-    reRenderItems();
-  }
-
-  function reRenderItems(){
-    const r = draftRecipes[editIdx];
-    const box = document.getElementById('re-items');
-    if (!box || !r) return;
-    box.innerHTML = r.items.length ? r.items.map((it,j)=>{
-      const g = ingIndex[it.ing];
-      return `<div class="row" style="padding:7px 0;border-bottom:0.5px solid var(--border);gap:8px;">
-        <span style="flex:1;">${esc(g?g.name:it.ing)}
-          ${g&&g.source==='SUPPLEMENT-VERIFY'?'<span class="tiny" style="color:var(--mirch);"> ·unverified</span>':''}
-        </span>
-        <input class="mono" type="number" min="0" style="width:74px;text-align:right;"
-               id="re-g-${j}" value="${+it.g||0}" oninput="reRecalc()">
-        <span class="tiny" style="color:var(--text3);">g</span>
-        <button style="padding:2px 8px;font-size:12px;" onclick="reDrop(${j})">×</button>
-      </div>`;
-    }).join('') : '<div class="muted" style="padding:8px 0;">No ingredients yet.</div>';
-    reRecalc();
-  }
-
-  // Reads the inputs rather than trusting the model, so what is shown is always
-  // what is on screen — including a half-typed number.
-  function reCurrent(){
-    const r = draftRecipes[editIdx];
-    const items = r.items.map((it,j)=>({
-      ing: it.ing,
-      g: parseFloat((document.getElementById('re-g-'+j)||{}).value) || 0
-    }));
-    return {
-      items,
-      servings: Math.max(1, parseInt((document.getElementById('re-servings')||{}).value) || 1),
-      yieldGrams: Math.max(0, parseFloat((document.getElementById('re-yield')||{}).value) || 0)
-    };
-  }
-
-  function reRecalc(){
-    const el = document.getElementById('re-macros');
-    if (!el || editIdx < 0) return;
-    const c = reCurrent();
-    const m = recipeMacros(c);
-    const per = c.yieldGrams ? Math.round(c.yieldGrams / c.servings) : null;
-    el.innerHTML =
-      `<b style="color:var(--text);">${m.kcal} kcal</b> · ${m.p}g P · ${m.c}g C · ${m.f}g F · ${m.fib}g fibre` +
-      ` <span style="color:var(--text3);">per serving</span>` +
-      (per ? ` <span style="color:var(--text3);">(~${per}g)</span>`
-           : ` <span style="color:var(--mirch);">· no cooked weight — saves as draft</span>`);
-  }
-
-  function reDrop(j){
-    const r = draftRecipes[editIdx];
-    const c = reCurrent();
-    r.items = c.items.filter((_,k)=>k!==j);
-    r.servings = c.servings; r.yieldGrams = c.yieldGrams;
-    reRenderItems();
-  }
-
-  function reAdd(){
-    const inp = document.getElementById('re-add');
-    const hint = document.getElementById('re-add-hint');
-    const q = (inp.value||'').trim();
-    if (!q) return;
-    // Resolved through the same matcher as the inventory, so "toor dal" and
-    // "arhar" both land on the right row and the recipe can never reference an
-    // ingredient code that doesn't exist.
-    const r = resolveIng(q);
-    if (!r || !r.ing){
-      hint.innerHTML = `<span style="color:var(--mirch);">No ingredient matches "${esc(q)}".</span>`;
-      return;
-    }
-    const rec = draftRecipes[editIdx];
-    const c = reCurrent();
-    rec.items = c.items; rec.servings = c.servings; rec.yieldGrams = c.yieldGrams;
-    if (rec.items.some(it => it.ing === r.ing.id)){
-      hint.innerHTML = `<span style="color:var(--text3);">${esc(r.ing.name)} is already in this recipe.</span>`;
-      return;
-    }
-    rec.items.push({ ing:r.ing.id, g:50 });
-    inp.value = '';
-    hint.textContent = `Added ${r.ing.name} at 50g — adjust it.`;
-    reRenderItems();
-  }
-
-  function reCommit(){
-    const r = draftRecipes[editIdx];
-    const c = reCurrent();
-    r.items = c.items.filter(it => it.g > 0);
-    r.servings = c.servings;
-    r.yieldGrams = c.yieldGrams;
-    r.edited = true;
-    renderRecipeApproval();
-  }
-
-  async function msSaveRecipes(){
-    captureChecks();
-    const keep = draftRecipes.filter(r => !r.skip);
-    // toast, not msStatus: the #ms-status element belongs to the setup sheet and
-    // does not exist while the approval list is open, so msStatus would no-op here
-    // and the tap would look like nothing happened.
-    // v4.8. Recipes are gone; DishIngredients replaced them and is written through
-    // addDishToLibrary, which keeps the sheet's formulas intact. This batch writer
-    // would have posted to a deleted action.
-    toast('Recipes have moved into the library');
-    return;
-  }
-
-  // v4.8. Archiving the old Claude-guessed macros is meaningless now: the table it
-  // archived no longer exists, and nothing stores a guessed macro to archive.
-  async function msArchive(){
-    msStatus('Nothing to archive — macros are computed in the library now.');
-  }
-
   // ══════════ KITCHEN ══════════
-  // v4.22. The old keyword CATEGORIES / categorize() are gone: groups come from the ingredient library.
   // "Low" is inferred from the quantity string. Crude but it never needs configuring,
   // and a wrong guess costs nothing more than an extra line on the shopping list.
   // Staples get eaten in bulk, so 400 g of atta is nearly out while 400 g of
-  // paneer is plenty. Thresholds vary by category rather than being one number.
-  const LOW_LIMITS = {
-    'Grains':          { bulk:1,   small:1000 },
-    'Dairy & bread':   { bulk:1,   small:500  },
-    'Proteins':        { bulk:0.5, small:250  },
-    'Vegetables':      { bulk:0.5, small:250  },
-    'Fruits':          { bulk:0.5, small:250  },
-    'Spices':          { bulk:0.1, small:50   },
-    'Oils & condiments':{ bulk:0.3, small:200 },
-    'Beverages':       { bulk:1,   small:500  }
-  };
+  // paneer is plenty. Thresholds vary by group (lowLimitFor) rather than being one number.
   // v4.22. Groups come from the shared ingredient library now (the item's IngID), not from a
   // keyword list: that list put atta under Dairy & bread. An item not yet matched to the
   // library sits in 'Not matched yet' until it is.
@@ -5097,7 +4758,7 @@
       try {
         let r = await sheetPost({ action:'addInventoryItems', updatedBy:activePerson,
           items:prepared.map(p => ({ name:p.name, qty:p.qty, ingId:p.ingId, brand:p.brand })) });
-        if (r && /unknown action/i.test(String(r.error||''))){        // older Code.gs: one at a time
+        if (isOldBackend(r)){        // older Code.gs: one at a time
           let ok = 0;
           for (const p of prepared){
             const q = await sheetPost({ action:'addInventoryItem', item:p.name, quantity:p.qty, updatedBy:activePerson,
@@ -5106,7 +4767,7 @@
           }
           r = ok ? { success:true } : { error:'all failed' };
         }
-        if (!r || r.error || r.success === false){
+        if (saveFailed(r)){
           inventory = snapshot; renderKitchen();
           toast("Couldn't save to your kitchen \u2014 nothing was added. Try again.", { ms: 5000 });
           return 0;
@@ -5139,7 +4800,7 @@
       silent.forEach(l => { const it = inventory.find(x => x.name === l.name); if (it){ it.ingId = l.ingId; it.brand = l.brand; } });
       renderKitchen();
       const r = await sheetPost({ action:'linkInventory', links:silent });
-      if (r && /unknown action/i.test(String(r.error||''))) return;     // backend not updated yet
+      if (isOldBackend(r)) return;     // backend not updated yet
     }
     runInvLearn();
   }
@@ -5237,7 +4898,7 @@
         `kcal, p (protein), c (carbs), f (fat), fib (fibre) are per 100 g of the ingredient as sold. ` +
         `density is g per ml, only for liquids or powders normally sold by volume, else 0. ` +
         `pieceGrams is the typical weight of one piece, only for things sold by count (eggs, lemons), else 0.`;
-      const r = await askJSON(prompt, 500);
+      const r = await askJSON(prompt, 500, 'smart', 'ingredient-learn');
       const v = validateNewIngredient(r);
       if (v.error){ console.warn('ingredient proposal rejected:', v.error, r); toast(`Couldn't match \u201c${typed}\u201d yet. It stays as typed.`); return; }
       // Is the generic name already in the library under another spelling? Then this is an alias, not a new row.
@@ -5335,7 +4996,7 @@
       `qualifier. A different main ingredient, a different preparation, or a dish that merely contains the same ` +
       `words is NOT a match: answer 0.`;
     try {
-      const r = await askFast(prompt, 80);
+      const r = await askFast(prompt, 80, 'dish-match');
       const n = parseInt(r && r.pick, 10);
       const conf = String((r && r.confidence) || '').toLowerCase();
       if (!(n >= 1 && n <= list.length)) return { dishId:'', confidence:conf || 'low', none:true };
@@ -5551,7 +5212,7 @@
         `If the class is C23 or C24 (counted), also give "pieces": how many pieces this batch makes.\n` +
         `Return JSON: {"classId":"C..","pieces":0,"hindi":"","ingredients":[{"id":"","name":"","g":0}],` +
         `"newIngredients":[{"name":"","hindi":"","group":"Vegetable|Cereal|Pulse|Spice|Dairy|Fat|Other","kcal":0,"p":0,"c":0,"f":0,"fib":0}]}`;
-      const r = await askJSON(prompt, 1500);
+      const r = await askJSON(prompt, 1500, 'smart', 'dish-learn');
       const v = validateDishProposal(r);
       if (v.error){ console.warn('dish proposal rejected:', v.error, r); toast(`Couldn't add “${name}” yet. It stays uncosted.`); return; }
 
@@ -5572,7 +5233,7 @@
       if (lines.length < 2){ toast(`Couldn't add “${name}” yet. It stays uncosted.`); return; }
       const w = await sheetPost({ action:'addDishToLibrary', name:name, classId:v.classId, hindi:v.hindi,
         ingredients:lines, pieces:v.pieces || undefined, inputConfidence:'estimated' });
-      if (!w || w.error || w.success === false){ toast(`Couldn't add “${name}” yet. It stays uncosted.`); return; }
+      if (saveFailed(w)){ toast(`Couldn't add “${name}” yet. It stays uncosted.`); return; }
       await loadIngredients(true);
       await syncAll(true);
       resolveCache[name.toLowerCase()] = { status:'matched' };
@@ -5690,7 +5351,7 @@
     if (stockBackendMissing) return 0;
     const r = await sheetPost({ action:'reconcileDeductions' });
     if (!r || r.error){
-      if (r && /unknown action/i.test(String(r.error||''))) stockBackendMissing = true;
+      if (isOldBackend(r)) stockBackendMissing = true;
       return 0;
     }
     if (r.applied > 0){
@@ -5712,7 +5373,7 @@
         `Already stocked: ${inventory.map(i=>i.name).join(', ') || 'nothing'}.\n` +
         `Diets: ${Object.entries(members).map(([n,p])=>n+': '+p.diet).join('; ')}.\n` +
         `Return an array of {item, qty, cat} to buy this week. 8-14 items. Indian groceries. ` +
-        `cat from: Proteins, Vegetables, Dairy & bread, Grains, Fruits, Spices, Oils & condiments, Beverages.`, 700);
+        `cat from: Proteins, Vegetables, Dairy & bread, Grains, Fruits, Spices, Oils & condiments, Beverages.`, 700, 'shopping-list');
       if (Array.isArray(r) && r.length) items = r;
     } catch(e){}
 
@@ -5844,7 +5505,7 @@
 
   function cacheMenu(key){
     if (!key || !pages.length) return;
-    menuCache[key] = { pages: pages, pageIdx: pageIdx, at: Date.now() };
+    menuCache[key] = { pages: pages, pageIdx: pageIdx, at: Date.now(), personal: menuIsPersonal };
   }
   function readMenuCache(key){
     const hit = menuCache[key];
@@ -5871,6 +5532,10 @@
     });
   }
   let loadingMenu = false, lastSlot = null, lastMenuFor = null, craving = '';
+  // v4.25. menuIsPersonal: the pages on screen answer ONE person's question (a craving or
+  // "Try something new") and live on this phone only. menuError: the last generation failed;
+  // its card must stay up until something replaces it (a later repaint used to hide it).
+  let menuIsPersonal = false, menuError = null;
 
   function menu(){ return pages[pageIdx] || []; }
 
@@ -6011,7 +5676,10 @@
     const before = craving;
     syncCraveBox();
     // If the box changed under us, the cached pages answer a different question.
-    if (craving !== before){ rejected = []; loadMenu(true, true); return; }
+    if (craving !== before){
+      if (!craving){ showHouseMenu(); return; }
+      rejected = []; loadMenu(true, true); return;
+    }
     // Forward: if a next page already exists, just show it (free). Otherwise generate.
     if (pageIdx < pages.length - 1){ pageIdx++; picked_ = new Set(); renderMenu(); return; }
     menu().forEach(m => rejected.push(m.dish));
@@ -6028,6 +5696,7 @@
     const v = (document.getElementById('crave-box')||{}).value || '';
     const next = v.trim();
     if (!next && !craving){ toast('Type what you feel like'); return; }
+    if (!next){ showHouseMenu(); return; }   // box emptied: back to the house menu, free
     craving = next;
     rejected = [];           // a craving, or dropping one, is a fresh intent
     loadMenu(true, true);
@@ -6041,8 +5710,14 @@
     if (el) craving = (el.value || '').trim();
   }
 
+  // ── Who shares what (v4.25) ──────────────────────────────────────────────
+  // The plain menu for a meal is the HOUSE menu: built once, saved to the shared CookNext
+  // list, and every phone shows it. Nobody pays for a second one.
+  // A craving ("Something specific") or "Try something new" is one person's question: its
+  // answer is shown only on that phone and is NOT added to the house list.
+  // "Add more" on the house menu adds a page to the house list for everyone.
   async function loadMenu(force, newPage){
-    if (loadingMenu) return;
+    if (loadingMenu || authShown) return;
     // Check 5 (first stop, not second opinion) turns on this event landing BEFORE
     // the day's first dish_logged, so it is emitted on every path into the menu —
     // shared, cached or generated — not only the expensive one.
@@ -6050,14 +5725,15 @@
     const others = Object.keys(members).length;
     const key = activeSlot() + '|' + others + '|' + craving + '|' + scopeKey() + '|' + likedDishes().length;
     if (!force && key === lastMenuFor && pages.length) return;
+    const personal = !!craving || surprise;
     // v3.12. The household's shared list comes FIRST — ahead of the local cache and
     // far ahead of Claude. If a flatmate already generated tonight's dinner, that is
     // the household's answer and generating a second one would be both wasteful and
     // contradictory: the food gets cooked once.
-    if (!force){
+    if (!force && !personal){
       const shared = sharedFor(activeSlot());
       if (shared.length){
-        pages = pagesFromShared(shared); pageIdx = 0;
+        pages = pagesFromShared(shared); pageIdx = 0; menuIsPersonal = false;
         lastMenuFor = key; lastSlot = activeSlot(); picked_ = new Set();
         renderMenu();
         return;
@@ -6070,6 +5746,7 @@
       const hit = readMenuCache(key);
       if (hit){
         pages = hit.pages; pageIdx = Math.min(hit.pageIdx, hit.pages.length - 1);
+        menuIsPersonal = !!hit.personal;
         lastMenuFor = key; lastSlot = activeSlot(); picked_ = new Set();
         renderMenu();
         return;
@@ -6083,6 +5760,15 @@
     const box = document.getElementById('t-cook');
     box.innerHTML = `<div class="eyebrow" style="color:var(--haldi);">Cook next · ${activeSlot()}</div>
       <div class="muted" style="margin-top:10px;">${craving?`Finding ${esc(craving)} ideas`:'Building the menu'}<span class="dots"></span></div>`;
+    menuError = null;
+
+    // v4.25. Before building the HOUSE menu, check no other phone is already building it.
+    // Not for a forced rebuild (tastes or region changed): that one must be new.
+    if (!force && !newPage && !personal && scopeKey() === 'shared'){
+      const slotWas = activeSlot();
+      const theirs = await waitForHouseMenu(activeSlot(), key);
+      if (theirs){ loadingMenu = false; if (activeSlot() !== slotWas) loadMenu(); return; }
+    }
 
     // Give Claude each person's likes/dislikes/favourites AND how well the cook
     // makes dishes, so it can both match tastes and prefer well-made dishes.
@@ -6119,7 +5805,7 @@
 
     try {
       const menuPrompt =
-        `Plan a ${slot} menu for an Indian household of ${others} in Delhi. A domestic cook makes the food.\n${roster}\n` +
+        `Plan a ${slot} menu for an Indian household of ${others} in ${settings.city ? settings.city + ', ' : ''}${REGIONS[region()].name}. A domestic cook makes the food.\n${roster}\n` +
         `\n${SLOT_SHAPE[slot] || ''}\n` +
         (slotIsToday(slot)
           ? `This is TODAY's ${slot}, and part of the day is already eaten. Left to hit before bed — the menu should close these gaps, not ignore them:\n` +
@@ -6183,10 +5869,11 @@
           if (!o || !o.dish) return;
           streamed.push(o);
           renderPartialMenu(streamed, slot);
-        });
+        }, 'menu');
         r = streamed;
       } catch(e){
-        r = await askJSON(menuPrompt, 1100);
+        if (e && e.stop) throw e;            // refused (daily limit, or kitchen not recognised): the buffered call would be refused too
+        r = await askJSON(menuPrompt, 1100, 'smart', 'menu');
       }
       logEv('menu_generated', slot);
       let newMenu = (Array.isArray(r) ? r : []).map(x=>({
@@ -6226,6 +5913,13 @@
       // rather than one erasing the other. The local view is then rebuilt from the
       // shared list, which means what you see is what everyone sees.
       const dateStr = slotDate(slot);
+      if (personal){
+        // A craving or "Try something new": this phone only. Not written to the house list.
+        if (newPage && menuIsPersonal){ pages.push(newMenu); pageIdx = pages.length - 1; }
+        else { pages = [newMenu]; pageIdx = 0; }
+        menuIsPersonal = true;
+      } else {
+      menuIsPersonal = false;
       const pub = await sheetPost({ action:'addCookNext', date:dateStr, slot:slot,
         scope:scopeKey(), addedBy:activePerson, items:newMenu });
       if (pub && pub.success){
@@ -6245,6 +5939,7 @@
         else { pages = [newMenu]; pageIdx = 0; }
         toast("Couldn't share this menu — only you can see it");
       }
+      }
       cacheMenu(key);   // v3.10: so switching away and back is free
       // Remember what it actually returned, not what was asked for — the exclusion
       // has to be built from the answer or the same dish comes back next tap.
@@ -6256,12 +5951,60 @@
       // dead API key, an empty balance, the daily cap, a retired model, a code error,
       // used to land on the same sentence, so none of them could be told apart.
       console.error('menu build failed:', e);
-      const why = esc(String((e && e.message) || e || 'unknown error').slice(0, 220));
-      box.innerHTML = `<div class="eyebrow" style="color:var(--haldi);">Cook next</div>
-        <div class="muted" style="margin-top:10px;">Couldn't build the menu. Tap to try again.</div>
-        <div class="tiny" style="margin-top:6px;word-break:break-word;">Why: ${why}</div>
-        <button style="width:100%;margin-top:12px;" onclick="loadMenu(true)">Try again</button>`;
+      menuError = { why:String((e && e.message) || e || 'unknown error').slice(0, 220), slot:activeSlot(), capped:!!(e && e.capped) };
+      box.innerHTML = menuErrorCard();
     } finally { loadingMenu = false; surprise = false; }
+  }
+
+  // The failed-menu card. Kept as state (menuError) so a repaint from a sync or a library
+  // load shows it again instead of "That's the menu done", which hid every failure.
+  function menuErrorCard(){
+    const e = menuError || { why:'' };
+    if (e.capped) return `<div class="eyebrow" style="color:var(--haldi);">Cook next</div>
+      <div class="muted" style="margin-top:10px;">Today's menu ideas for this kitchen are used up. They reset at midnight.</div>
+      <div class="tiny" style="margin-top:6px;">You can still add any dish by name with + Add on the Menu above.</div>`;
+    return `<div class="eyebrow" style="color:var(--haldi);">Cook next</div>
+      <div class="muted" style="margin-top:10px;">Couldn't build the menu. Tap to try again.</div>
+      <div class="tiny" style="margin-top:6px;word-break:break-word;">Why: ${esc(e.why)}</div>
+      <button style="width:100%;margin-top:12px;" onclick="loadMenu(true)">Try again</button>`;
+  }
+
+  // Asks the backend for the right to build this meal's house menu. If another phone holds
+  // it (or the menu already exists), waits up to a minute for that menu instead of paying for
+  // a second one. Returns true when the house menu is now on screen, false to build it here.
+  // An older Code.gs answers "Unknown action": then this phone simply builds it, as before.
+  async function waitForHouseMenu(slot, key){
+    const date = slotDate(slot);
+    const show = list => {
+      pages = pagesFromShared(list); pageIdx = 0; menuIsPersonal = false;
+      cacheMenu(key); renderMenu(); return true;
+    };
+    const c = await sheetPost({ action:'claimCookNext', date:date, slot:slot, scope:'shared', by:activePerson || '' });
+    if (!c || c.error || c.claimed !== false) return false;
+    if (Array.isArray(c.items)) cookNext = c.items;
+    let list = sharedFor(slot, date);
+    if (list.length) return show(list);
+    const box = document.getElementById('t-cook');
+    if (box) box.innerHTML = `<div class="eyebrow" style="color:var(--haldi);">Cook next · ${esc(slot)}</div>
+      <div class="muted" style="margin-top:10px;">${esc(c.by || 'Someone')}'s phone is building the ${esc(slot)} menu<span class="dots"></span></div>`;
+    for (let i = 0; i < 15; i++){
+      await new Promise(res => setTimeout(res, 4000));
+      if (activeSlot() !== slot) return true;            // they moved on; the next loadMenu handles it
+      const r = await sheetGet('getAll', '&want=getCookNext');
+      if (r && r.getCookNext && Array.isArray(r.getCookNext.items)) cookNext = r.getCookNext.items;
+      list = sharedFor(slot, date);
+      if (list.length) return show(list);
+    }
+    return false;                                         // the other phone gave up: build it here
+  }
+
+  // Back to the house menu from a craving or "Try something new". Free: the house menu is
+  // already in the shared list (or in this phone's cache).
+  function showHouseMenu(){
+    craving = ''; rejected = []; surprise = false;
+    const el = document.getElementById('crave-box'); if (el) el.value = '';
+    pages = []; pageIdx = 0; menuIsPersonal = false; lastMenuFor = null;
+    loadMenu();
   }
 
   function whoLabel(names){
@@ -6296,6 +6039,7 @@
   function renderMenu(){
     const box = document.getElementById('t-cook');
     const cur = menu();
+    if (!cur.length && menuError && menuError.slot === activeSlot()){ box.innerHTML = menuErrorCard(); return; }
     if (!cur.length){
       box.innerHTML = `<div class="eyebrow" style="color:var(--haldi);">Cook next · ${activeSlot()}</div>
         <div class="muted" style="margin-top:10px;">That's the menu done. Want fresh ideas?</div>
@@ -6367,6 +6111,11 @@
         // v3.12. Say whose menu this is and who built it. When three people share
         // one list, "who added this" is the difference between a menu you trust and
         // one that appeared from nowhere.
+        if (menuIsPersonal) return `<div class="row tiny" style="margin-top:6px;color:var(--text3);">
+          <span>Only on your phone${craving ? ' \u00b7 \u201c' + esc(craving) + '\u201d' : ' \u00b7 something new'}</span>
+          <button class="btn-ghost" style="padding:2px 0;min-height:0;font-size:12px;"
+            onclick="showHouseMenu()">Show the house menu</button>
+        </div>`;
         const others = Object.keys(members).length > 1;
         if (!others) return '';
         const mine = menuScope !== 'shared';
@@ -6588,9 +6337,8 @@
     if (craveOpen){ const el = document.getElementById('crave-box'); if (el) el.focus(); }
   }
   function clearCraving(){
-    craving = '';
-    rejected = [];
-    loadMenu(true, true);
+    showHouseMenu();
+    return;
   }
 
   // ── Add something else (straight to the menu) ──────────────────────────────
@@ -6666,7 +6414,7 @@
         `actually is, "portion" is a normal serving for one person with a number ` +
         `(e.g. "1 katori, 2 roti"), and "serving" says how it is eaten — with what, ` +
         `mixed or separate (e.g. "Eat the eggs on the side, not mixed into the oats"). ` +
-        `Keep each under 18 words.`, 350);
+        `Keep each under 18 words.`, 350, 'dish-info');
       m.details = { what:r.what||'', portion:r.portion||'', serving:r.serving||'' };
     } catch(e){ m.details = false; }
     if (expandedDish === i) renderMenu();
@@ -6886,7 +6634,7 @@
         `If a dish has [advance prep] marked, add that instruction to the end of that same line in ${lang.name} ` +
         `(e.g. soaking or marinating), phrased as something to do now — she will otherwise miss it.\n` +
         `Return {title, lines} where title is the meal name in ${lang.name} script and lines is an array of ` +
-        `strings in ${lang.name} script, one per dish.`, 500);
+        `strings in ${lang.name} script, one per dish.`, 500, 'cook-order');
       if (r && Array.isArray(r.lines) && r.lines.length){
         orderLines = r.lines;
         renderCookSheet(r.title || title, lang, dishes);
@@ -6966,7 +6714,7 @@
         `Give 5 to 7 short steps in ${lang.name} script, everyday spoken language, each under 15 words. ` +
         `Use digits for every quantity and time (2 pyaaz, 10 minute). If the dish needs soaking or ` +
         `marinating, make that step 1 and say how long.\n` +
-        `Return {title, steps} where title is the dish name in ${lang.name} script and steps is an array of strings.`, 700);
+        `Return {title, steps} where title is the dish name in ${lang.name} script and steps is an array of strings.`, 700, 'smart', 'cook-teach');
       if (r && Array.isArray(r.steps) && r.steps.length){
         teachLines = r.steps.map(x=>String(x));
         teachTitle = r.title || dishName;
@@ -7151,7 +6899,7 @@
       const r = await askFast(
         `Parse this gym log into structured data: "${txt}"\n` +
         `Return an array of {exercise, muscleGroup, sets:[{reps, weight}]}. ` +
-        `weight in kg, 0 for bodyweight. muscleGroup from: chest, back, legs, shoulders, arms, core, cardio.`, 700);
+        `weight in kg, 0 for bodyweight. muscleGroup from: chest, back, legs, shoulders, arms, core, cardio.`, 700, 'workout');
       pendingSets = Array.isArray(r) ? r : [r];
       box.innerHTML = `<div class="card">
         <div class="eyebrow">Check this</div>
@@ -7273,10 +7021,13 @@
       }
       try {
         const r = await fetch(VISION_API, {
-          method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({ imageBase64:b64, imageType:'image/jpeg', taskType:task })
+          method:'POST', headers:{'Content-Type':'application/json', 'x-nos-purpose':'vision'},
+          body: JSON.stringify({ imageBase64:b64, imageType:'image/jpeg', taskType:task, ...claudeWho() })
         });
         const res = await r.json();
+        // v4.25. A photo scan now counts toward the daily limit, so say so when it is used up
+        // (the proxy's message), instead of the generic "couldn't read that photo".
+        if (res.error && (r.status === 429 || r.status === 401 || r.status === 403)){ toast(String(res.error), { ms:5000 }); return; }
         if (res.error) throw new Error(res.error);
         const d = res.data;
         if (!d) throw new Error('empty');
@@ -7506,83 +7257,6 @@
     toast('Preferences saved');
     await sheetPost({ action:'savePreferences', person:activePerson, diet:p.diet,
       likes:p.likes, dislikes:p.dislikes, allergies:p.allergies, favourites:p.favourites });
-  }
-
-  // ══════════ DISH DATABASE ══════════
-  function openDishDB(){
-    const entries = Object.entries(dishInfo).sort((a,b)=>a[0].localeCompare(b[0]));
-    if (!entries.length){
-      openSheet(`<h2>Dish database</h2>
-        <p class="muted" style="margin-top:12px;">Empty for now. As you log meals, each new dish is
-        estimated once and saved here for the whole household. You can correct any of them later.</p>`);
-      return;
-    }
-    openSheet(`
-      <h2>Dish database</h2>
-      <p class="muted" style="margin:8px 0 14px;">Per-serving macros, shared across all devices.
-      Tap any dish to correct it — corrections are marked confirmed and won't be overwritten.</p>
-      <input id="dbq" placeholder="Search dishes" oninput="filterDishDB(this.value)" style="margin-bottom:12px;">
-      <div id="db-list">${dishDBRows(entries)}</div>
-`);
-  }
-
-  function dishDBRows(entries){
-    return entries.map(([key,m])=>{
-      const badge = m.source==='confirmed'
-        ? `<span class="tiny" style="color:var(--dhania);">confirmed</span>`
-        : `<span class="tiny" style="color:var(--text3);">estimated</span>`;
-      const rate = m.rating==='favourite' ? ` · <span class="tiny" style="color:var(--dhania);">★ favourite</span>`
-        : m.rating==='avoid' ? ` · <span class="tiny" style="color:var(--mirch);">△ avoid</span>`
-        : m.rating==='fine' ? ` · <span class="tiny" style="color:var(--text3);">fine</span>` : '';
-      return `<div class="row" style="padding:11px 0;border-bottom:0.5px solid var(--border);cursor:pointer;"
-                onclick="editDish(${jsAttr(key)})">
-          <div><div>${esc(cap(key))}</div>${badge}${rate}</div>
-          <span class="mono tiny">${m.kcal} kcal · ${m.p}p</span>
-        </div>`;
-    }).join('');
-  }
-
-  function filterDishDB(q){
-    q = (q||'').toLowerCase();
-    const entries = Object.entries(dishInfo)
-      .filter(([k])=>k.includes(q)).sort((a,b)=>a[0].localeCompare(b[0]));
-    const el = document.getElementById('db-list');
-    if (el) el.innerHTML = entries.length ? dishDBRows(entries)
-      : `<div class="muted" style="padding:12px 0;">No match.</div>`;
-  }
-
-  function editDish(key){
-    const m = dishInfo[key];
-    if (!m) return;
-    openSheet(`
-      <h2>${esc(cap(key))}</h2>
-      <p class="muted" style="margin:8px 0 16px;">Per one serving. ${m.source==='confirmed'
-        ? 'This is confirmed.' : 'This is a Claude estimate — correcting it marks it confirmed.'}</p>
-      ${[['kcal','Calories','kcal'],['p','Protein','g'],['c','Carbs','g'],['f','Fat','g'],['fib','Fibre','g']].map(([k,l,u])=>
-        `<div class="field"><label for="ed-${k}">${l} (${u})</label>
-          <input class="mono" type="number" id="ed-${k}" value="${m[k]==null?'':m[k]}"
-            ${k==='fib'&&m.fib==null?'placeholder="not estimated yet"':''}></div>`).join('')}
-      <button class="btn-primary" style="width:100%;" onclick="saveDish(${jsAttr(key)})">
-        Save as confirmed
-      </button>`);
-  }
-
-  async function saveDish(key){
-    const m = dishInfo[key] || { source:'estimated' };
-    m.kcal = +document.getElementById('ed-kcal').value || 0;
-    m.p    = +document.getElementById('ed-p').value || 0;
-    m.c    = +document.getElementById('ed-c').value || 0;
-    m.f    = +document.getElementById('ed-f').value || 0;
-    const fibEl = document.getElementById('ed-fib');
-    m.fib  = fibEl && fibEl.value !== '' ? +fibEl.value : m.fib;
-    m.source = 'confirmed';
-    dishInfo[key] = m;
-    closeSheet(); renderAll();
-    toast('Saved as confirmed');
-        // v4.8. saveDishLibrary is gone. A dish the library does not know is added
-        // through addDishToLibrary, which writes INPUTS (its class and ingredients)
-        // and lets the sheet compute the macros. Writing numbers here would have
-        // overwritten the formulas that make the whole thing self-correcting.
   }
 
   function openCookSettings(){
@@ -7947,12 +7621,6 @@
     authShown = false;
     location.reload();
   }
-  async function loadMyKitchens(){
-    const r = await sheetPost({ action:'myHouseholds' });
-    if (r && r.households){ MY_HHS = r.households; return true; }
-    if (r && /session expired|sign in required/i.test(String(r.error||''))){ setSession('', null); renderHhGate(); }
-    return false;
-  }
   function setHhMode(m){ hhMode = m; renderHhGate(); }
 
   function renderHhGate(){
@@ -8048,6 +7716,7 @@
     hhMode = 'join';
     startHouseholdGate();
     hhMsg(/not a member/i.test(err) ? 'You are no longer in this kitchen. Join again with the house name and its PIN.'
+        : /too many wrong/i.test(err) ? 'Too many wrong PINs. This kitchen is locked for 15 minutes. Try again then.'
         : /pin/i.test(err) ? "That PIN doesn't match this kitchen. Enter it again."
                            : "That kitchen wasn't found. Check the house name.");
   }
@@ -8297,7 +7966,7 @@
   async function linkMyPerson(n){
     if (!(LOGIN_ON && SESS)) return true;
     const r = await sheetPost({ action:'linkPerson', person:n });
-    if (!r || r.error || r.success === false){ toast((r && r.error) || "Couldn't link that name. Try again."); return false; }
+    if (saveFailed(r)){ toast((r && r.error) || "Couldn't link that name. Try again."); return false; }
     PEOPLE = PEOPLE.filter(p => !p.me).concat([{ person:n, photo:(USER && USER.picture) || '', me:true }]);
     return true;
   }
@@ -8412,7 +8081,7 @@
     // v4.13. sheetPost resolves with {error} rather than throwing. Ignoring it is how a
     // finished onboarding could look fine while nothing had reached the Sheet.
     if (!saved || saved.error){
-      if (saved && /bad pin|unknown household|session expired|sign in required|not a member/i.test(String(saved.error||''))){ authFailed(String(saved.error)); return; }
+      if (saved && /bad pin|unknown household|session expired|sign in required|not a member|too many wrong|household required/i.test(String(saved.error||''))){ authFailed(String(saved.error)); return; }
       toast("Couldn't save to your kitchen" + (saved && saved.error ? ': ' + saved.error : '. Check your connection.'), { ms: 6000 });
     }
     await sheetPost({ action:'updateMacros', person:name, calories:cal, protein, carbs, fat, weight });
@@ -8584,6 +8253,9 @@
   async function boot(){
     logEv('app_open');
     await syncAll(true);
+    // v4.25. A refused kitchen (wrong PIN, removed) used to carry on and spend Claude calls on a
+    // menu for a kitchen this phone can't open.
+    if (authShown) return;
     applyIdentity(); maybeLinkAccount();
     loadMenu();
     // Match any dish name the library does not recognise exactly, so the day bar can
