@@ -1,6 +1,36 @@
 // ─────────────────────────────────────────────
 // Nutrition OS — Google Apps Script Backend
 // ─────────────────────────────────────────────
+//
+// WHAT THIS FILE IS
+//   The web app behind index.html. Every request: doGet/doPost → handleRequest → resolve the
+//   household (registry + PIN or Google session) → one action in the big switch → JSON back.
+//   Data lives in Google Sheets: one spreadsheet per household, plus ONE shared library
+//   spreadsheet (dishes, ingredients, measures) that every household reads.
+//
+// SECTIONS (search for the text)
+//   SHEETS = {            every tab and its columns (APPEND columns, never insert)
+//   function handleRequest  routing, owner lock, the action switch
+//   ALL_READERS           what one sync (getAll) returns; must match the client's merge
+//   MACRO FOUNDATION      ingredients, measures, portion maths, adding dishes/ingredients
+//   Cook next, shared     the house menu list (add-only) + who is building it (claimCookNext)
+//   Inventory / Meal Log  shelf, logging, edit/delete
+//   DISH MATCHING         free text → a library dish, aliases, cleanup
+//   STOCK DEDUCTION       what a logged meal takes off the shelf (idempotent, reversible)
+//   The Menu / sweep      decided dishes; auto-log after the slot ends
+//   GOOGLE SIGN-IN        sessions, accounts, memberships
+//   MULTI-TENANCY         registry, PIN check, createHousehold
+//   Instrumentation       Events tab and the six-check test (getChecks)
+//
+// RULES (each one is a bug that already shipped once)
+//   1. Read and write library tabs by HEADER NAME (ingredientCols_), never by position.
+//   2. Never setValue() into DishCatalog/DishIngredients formula columns; go through dishCatalogRow_.
+//   3. Dates read from a sheet go through asISODate()/istDay_(); IST is 'Asia/Kolkata', always.
+//   4. A new sync reader goes into ALL_READERS AND the client's syncAll merge.
+//   5. Setup must run inside an ordinary request (setupSheets), never as a run-once function.
+//   6. This file never calls Claude and holds no API key.
+//   7. A request with no household name is refused. There is no "default kitchen" any more.
+//   8. A PIN is compared in ONE place (checkPin_), which also counts wrong tries and locks.
 
 // This household's own data. Every household gets its own copy of this
 // spreadsheet — nothing here is shareable.
@@ -44,7 +74,7 @@ var _activeHousehold_ = 'default';
 // (docs.google.com/spreadsheets/d/<THIS PART>/edit), paste it here, then run
 // migrateLibrary() once from the Apps Script editor.
 // v4.11. Reported by the `whoami` action, so a deploy can be verified without opening the editor.
-const CODE_VERSION = 'v4.24';
+const CODE_VERSION = 'v4.25';
 
 const LIBRARY_SHEET_ID = '1JPwxAoT6ZpzNvskOszHApfaRq9ntYeih6A3TT4Z0o3Q';   // nutrition-library.xlsx, uploaded to Drive
 
@@ -310,14 +340,8 @@ const SHEETS = {
 // every house would quietly grow its own private copy of the food model.
 const LIBRARY_SHEETS = ['DishCatalog', 'DishClasses', 'DishIngredients', 'Ingredients', 'Measures', 'AliasLog'];
 
-const DEFAULT_MACROS = [
-  ['You',        1900, 150, 185, 55, 75, 30],
-  ['Flatmate1',  1800, 140, 175, 52, 70, 28],
-  ['Flatmate2',  2000, 158, 195, 58, 80, 32]
-];
-
 const OWNER_ONLY_ACTIONS_ = ['setMeasure', 'seedTable', 'seedIngredientPieces', 'mergeDishes', 'updateDishAliases',
-  'cleanupBareDishes', 'resetSchema', 'migrateDishCatalog', 'migrateLibrary', 'canonicaliseInventory'];
+  'cleanupBareDishes', 'resetSchema', 'migrateDishCatalog', 'canonicaliseInventory', 'privatizeFeedback'];
 
 // Returns an error object when the caller is not the owner, else null. The key is never in the
 // code or the app: it lives in Project Settings > Script properties.
@@ -356,6 +380,7 @@ function handleRequest(e) {
     // Must run BEFORE resolveHousehold_. A stale cached PIN blocks resolution, so
     // an action that needs resolving first could never be the thing that clears it.
     if (action === 'clearRegistryCache') return jsonResponse(clearRegistryCache());
+    if (action === 'unlockHousehold') return jsonResponse(unlockHousehold(body));
 
     const auth = resolveHousehold_(e.parameter.hh || body.hh, e.parameter.pin || body.pin, _authEmail_);
     if (auth.error) return jsonResponse(auth);
@@ -383,6 +408,8 @@ function handleRequest(e) {
       case 'getCookNext':         result = getCookNext();                 break;
       case 'addCookNext':         result = addCookNext(body);             break;
       case 'removeCookNext':      result = removeCookNext(body);          break;
+      case 'claimCookNext':       result = claimCookNext(body);           break;
+      case 'privatizeFeedback':   result = privatizeFeedback();           break;
       case 'getTopDishes':        result = getTopDishes(body);            break;
       case 'canonicaliseInventory': result = canonicaliseInventory(body); break;
       case 'getIngredients':      result = getIngredients();              break;
@@ -430,7 +457,6 @@ function handleRequest(e) {
       case 'getDishCatalog':      result = getDishCatalog();              break;
       case 'getDishIngredients':  result = getDishIngredients();          break;
       case 'migrateDishCatalog':  result = migrateDishCatalog();          break;
-      case 'migrateLibrary':      result = migrateLibrary();              break;
       case 'getDishDuplicateCandidates': result = getDishDuplicateCandidates(); break;
       case 'mergeDishes':         result = mergeDishes(body);             break;
       case 'updateDishAliases':   result = updateDishAliases(body);       break;
@@ -501,7 +527,7 @@ function setupSheetsUncached_() {
       sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold').setBackground('#f3f2ef');
       // v4.18. Macros is NO LONGER seeded with You / Flatmate1 / Flatmate2. Every new kitchen
       // started with three placeholder people nobody asked for. A kitchen starts empty and each
-      // person adds themselves in onboarding. (DEFAULT_MACROS kept below, unused, for reference.)
+      // person adds themselves in onboarding.
     } else {
       // A sheet that already exists may predate a column we've since added
       // (e.g. DishMacros.CookKnows). Backfill only the missing trailing header
@@ -753,123 +779,6 @@ function seedTable(body) {
   return { success: true, written: norm.length };
 }
 
-
-// ── v4.7 library migration ───────────────────────────────────────────────────
-// Run ONCE from the Apps Script editor after pointing LIBRARY_SHEET_ID at the
-// shared spreadsheet. Idempotent: safe to re-run, and it never deletes a dish.
-//
-// The two reference tables below are small enough to live in code, and belong
-// there — they are the tuned constants the whole model rests on. The bulk data
-// (108 ingredients, 107 dishes, 893 ingredient rows) arrives as seed CSVs
-// through seedTable, matching how Ingredients has always been loaded.
-
-const DISH_CLASSES_SEED = [
-  ["C01", "Thin dal", "Pourable dal, spoon leaves a trail that closes", 1.02, 0.88, 0.22, "Medium"],
-  ["C02", "Thick dal", "Dal that mounds slightly on the spoon", 1.08, 0.88, 0.28, "Medium"],
-  ["C03", "Whole-legume gravy", "Whole beans suspended in gravy", 1, 0.88, 0.25, "Medium"],
-  ["C04", "Gravy sabzi", "Vegetable/paneer pieces in a pourable gravy", 1, 0.88, 0.22, "Medium"],
-  ["C05", "Semi-dry sabzi", "Coated in masala, little free liquid", 0.8, 0.9, 0.25, "Medium"],
-  ["C06", "Dry sabzi", "Loose pieces, visible air gaps in the katori", 0.68, 0.95, 0.25, "Low"],
-  ["C07", "Mash / puree", "Fully broken down, dense and smooth", 1.05, 0.88, 0.3, "Medium"],
-  ["C08", "Plain rice", "Separate cooked grains", 0.78, 1, 0.14, "Medium"],
-  ["C09", "Mixed rice", "Rice with vegetables/meat, looser packing", 0.72, 1, 0.14, "Low"],
-  ["C10", "Porridge / khichdi", "Soft, spoonable, holds shape", 0.95, 0.9, 0.2, "Medium"],
-  ["C11", "Curd / raita", "Set or whisked dairy", 1.03, 0.88, 0, "High"],
-  ["C12", "Chutney / paste", "Thick ground paste, served in spoonfuls", 1.05, 0.8, 0.05, "Medium"],
-  ["C13", "Thin soup / kadhi", "Fully liquid", 1, 0.88, 0.2, "Medium"],
-  ["C14", "Dense sweet", "Ghee-bound, heavy", 1.1, 0.9, 0.25, "Medium"],
-  ["C15", "Liquid sweet", "Milk-based, pourable", 1.05, 0.88, 0.25, "Medium"],
-  ["C16", "Light snack", "Flaky/fluffy, lots of trapped air", 0.58, 0.95, 0.2, "Low"],
-  ["C17", "Fried snack", "Deep-fried pieces, large air gaps", 0.45, 1, 0.15, "Low"],
-  ["C18", "Raw salad", "Chopped raw vegetables", 0.45, 1, 0, "Medium"],
-  ["C19", "Egg dish", "Scrambled or set egg", 0.85, 0.9, 0.2, "Medium"],
-  ["C20", "Meat gravy", "Meat pieces in gravy", 1, 0.88, 0.25, "Medium"],
-  ["C21", "Dry meat", "Grilled/roasted pieces", 0.7, 0.95, 0.3, "Low"],
-  ["C22", "Beverage", "Tea, lassi, buttermilk", 1.01, 0.9, 0.1, "High"],
-  ["C23", "Counted bread", "Not measured by volume - counted per piece", 0, 0, 0.15, "High"],
-  ["C24", "Counted piece", "Not measured by volume - counted per piece", 0, 0, 0, "High"]
-];
-
-const MEASURES_SEED = [
-  ["Katori, small", "छोटी कटोरी", "volume", 100, "Steel katori ~7 cm across. Common in restaurants/thalis."],
-  ["Katori, standard", "कटोरी", "volume", 150, "The default when someone says 'ek katori'. ~9 cm across."],
-  ["Katori, large", "बड़ी कटोरी", "volume", 200, "~11 cm across. Common as the everyday home katori in the North."],
-  ["Bowl", "बाउल", "volume", 300, "Soup/cereal bowl."],
-  ["Cup (measuring)", "कप", "volume", 240, "US standard measuring cup."],
-  ["Cup (Indian tea cup)", "चाय का कप", "volume", 150, "Standard chai cup."],
-  ["Glass", "गिलास", "volume", 250, "Standard steel/glass tumbler."],
-  ["Small glass", "छोटा गिलास", "volume", 200, "Chai/lassi glass."],
-  ["Serving spoon (karchhi)", "करछी", "volume", 60, "One heaped serving-spoon of sabzi or dal."],
-  ["Ladle", "बड़ी करछी", "volume", 80, "Dal ladle."],
-  ["Tablespoon", "बड़ा चम्मच", "volume", 15, "Level tablespoon."],
-  ["Teaspoon", "छोटा चम्मच", "volume", 5, "Level teaspoon."],
-  ["Plate serving (rice)", "प्लेट", "volume", 350, "A plate-sized helping of rice."],
-  ["Quarter plate", "क्वार्टर प्लेट", "volume", 180, "Side helping."],
-  ["Piece", "पीस", "count", 0, "For counted items: roti, egg, samosa, idli."]
-];
-
-// Creates a tab if absent and (re)writes its header row to match SHEETS.
-// Never touches data rows — a header fix must not cost a household its dishes.
-function ensureTab_(name) {
-  const ss = ssFor(name);
-  let sheet = ss.getSheetByName(name);
-  if (!sheet) sheet = ss.insertSheet(name);
-  const hdr = SHEETS[name];
-  sheet.getRange(1, 1, 1, hdr.length).setValues([hdr]);
-  sheet.setFrozenRows(1);
-  return sheet;
-}
-
-function migrateLibrary() {
-  const report = { classes: 0, measures: 0, dishesRewritten: 0, dishesPreserved: 0 };
-
-  // 1. Reference tables. Rewritten wholesale: they are constants, not user data.
-  const cls = ensureTab_('DishClasses');
-  clearDataRows(cls);
-  const clsRows = DISH_CLASSES_SEED.map((r, i) => {
-    const n = i + 2;
-    return [r[0], r[1], r[2], r[3], r[4], r[5],
-      '=IF(D' + n + '=0,"counted",ROUND(D' + n + '*E' + n +
-      '*INDEX(Measures!$D:$D,MATCH("Katori, standard",Measures!$A:$A,0)),0))', r[6]];
-  });
-  cls.getRange(2, 1, clsRows.length, SHEETS.DishClasses.length).setValues(clsRows);
-  report.classes = clsRows.length;
-
-  const meas = ensureTab_('Measures');
-  clearDataRows(meas);
-  meas.getRange(2, 1, MEASURES_SEED.length, SHEETS.Measures.length).setValues(MEASURES_SEED);
-  report.measures = MEASURES_SEED.length;
-
-  ensureTab_('DishIngredients');
-  ensureTab_('Ingredients');
-
-  // 2. DishCatalog. Existing rows are READ FIRST, then rewritten in place as
-  //    formula rows carrying their old identity forward. Nothing is deleted:
-  //    a dish the household actually cooked keeps its DishID, so every MealLog
-  //    and DishMacros row still points at something real.
-  const cat  = ensureTab_('DishCatalog');
-  const old  = getDataRows(cat);
-  const kept = old.filter(r => r[0]).map(r => ({
-    dishId: r[0], name: r[1], aliases: r[2] || '',
-    // Old layout was [DishID, CanonicalName, Aliases, IngredientRefs, Status,
-    // CreatedAt]. IngredientRefs (index 3) was always reserved and blank, so it
-    // is dropped rather than migrated. Status/CreatedAt move from 4/5 to 5/6.
-    status: r[4] || r[5] || 'active',
-    createdAt: r[5] || r[6] || istNow(),
-    // No ClassID and no DishIngredients rows yet, so this dish's macros are
-    // genuinely unknown until it is classified. Saying 'unclassified' keeps that
-    // visible instead of letting an empty formula read as a zero-calorie dish.
-    inputConfidence: 'unclassified'
-  }));
-  if (kept.length) {
-    clearDataRows(cat);
-    const rows = kept.map((k, i) => dishCatalogRow_(i + 2, k));
-    cat.getRange(2, 1, rows.length, SHEETS.DishCatalog.length).setValues(rows);
-    report.dishesRewritten = rows.length;
-    report.dishesPreserved = rows.length;
-  }
-  return report;
-}
 
 // ── The resolver: free text → a canonical ingredient ────────────────────────
 // This is what stops "Amul Taaza Toned Milk 500ml" and "toned milk" becoming two
@@ -1295,8 +1204,42 @@ function addCookNext(body) {
       added.push(dish);
     });
     if (out.length) sheet.getRange(sheet.getLastRow() + 1, 1, out.length, out[0].length).setValues(out);
+    // v4.25. The menu is here now, so nobody is "building" it any more.
+    CacheService.getScriptCache().remove(claimKey_(date, slot, scope));
     return { success: true, added: added.length, dishes: added };
   } finally { lock.releaseLock(); }
+}
+
+// v4.25. Two phones opened at lunchtime used to build two house menus: two paid Claude calls
+// and two different answers. Before building, a phone asks here. The first one gets the job
+// (claimed:true) for 90 seconds; any other phone is told who has it (claimed:false, by) and
+// waits for that menu. If the menu already exists, everyone is told so (ready:true) and gets
+// the list back. If the lock is busy, the phone just builds it (the old behaviour).
+function claimKey_(date, slot, scope) {
+  return 'cng_' + _activeHousehold_ + '_' + date + '_' + slot + '_' + scope;
+}
+function claimCookNext(body) {
+  const date = String((body && body.date) || '').trim();
+  const slot = String((body && body.slot) || '').trim().toLowerCase();
+  const scope = String((body && body.scope) || 'shared').trim();
+  const by = String((body && body.by) || '').trim().slice(0, 40);
+  if (!date || !slot) return { error: 'date and slot required' };
+  const out = withScriptLock_(function () {
+    const items = getCookNext().items;
+    if (items.some(function (x) { return x.date === date && x.slot === slot && x.scope === scope; }))
+      return { success: true, claimed: false, ready: true, items: items };
+    const cache = CacheService.getScriptCache();
+    const key = claimKey_(date, slot, scope);
+    const held = cache.get(key);
+    if (held) {
+      let h = {};
+      try { h = JSON.parse(held) || {}; } catch (e) { h = {}; }
+      if (h.by && h.by !== by) return { success: true, claimed: false, by: h.by, items: items };
+    }
+    cache.put(key, JSON.stringify({ by: by, at: Date.now() }), 90);
+    return { success: true, claimed: true };
+  }, 5000);
+  return (out && out.status === 'busy') ? { success: true, claimed: true } : out;
 }
 
 // Removing ONE dish is not replacing the menu — it is the "no thanks" the menu has
@@ -2970,6 +2913,19 @@ function feedbackFolder() {
   return scope.createFolder(name);
 }
 
+// v4.25 (Phase 1). One-off owner tool: makes every screenshot already in the feedback folder
+// private (the ones saved before v4.25 are "anyone with the link"). Safe to run twice.
+function privatizeFeedback() {
+  let n = 0;
+  const files = feedbackFolder().getFiles();
+  while (files.hasNext() && n < 2000) {
+    const f = files.next();
+    f.setSharing(DriveApp.Access.PRIVATE, DriveApp.Permission.NONE);
+    n++;
+  }
+  return { success: true, madePrivate: n };
+}
+
 function saveFeedbackPhoto(base64, mimeType, person) {
   try {
     const folder = feedbackFolder();
@@ -2980,7 +2936,9 @@ function saveFeedbackPhoto(base64, mimeType, person) {
     const name = 'feedback-' + stamp + '-' + (person || 'unknown') + '.' + ext;
     const blob = Utilities.newBlob(Utilities.base64Decode(base64), mimeType || 'image/png', name);
     const file = folder.createFile(blob);
-    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    // v4.25 (Phase 1). Private: only the Drive owner (you) can open it. It used to be "anyone
+    // with the link", and a screenshot can show a household's food log.
+    file.setSharing(DriveApp.Access.PRIVATE, DriveApp.Permission.NONE);
     return { url: file.getUrl(), folder: folder.getUrl(), name: name };
   } catch (err) {
     return null;
@@ -3640,8 +3598,9 @@ function joinHousehold(body) {
                 rows.filter(function (r) { return String(r[0]).trim().toLowerCase() === slug; })[0];
   if (!found) return { error: 'Unknown household' };
   const pin = String(found[4] || '').trim();
-  if (pin && String((body && body.pin) || '').trim() !== pin) return { error: 'Bad PIN' };
   const hh = String(found[0]).trim().toLowerCase();
+  const badPin = checkPin_(hh, (body && body.pin), pin);
+  if (badPin) return badPin;
   addMembership_(_authEmail_, hh, '', 'member');
   return { success: true, hh: hh, name: String(found[1]).trim() };
 }
@@ -3735,14 +3694,58 @@ function registryRows_() {
 // Resolving hits the registry spreadsheet, which is a round trip we do NOT want
 // in front of every one of the ~11 reads a sync makes. The mapping almost never
 // changes, so it is cached for six hours per household.
-function resolveHousehold_(hh, pin, email) {
-  if (!hh) {
-    if (authRequired_()) return { error: 'Sign in required' };
-    // No household on the request: the pre-v4.0 client, or the original house.
-    _activeSheetId_ = SHEET_ID;
-    _activeHousehold_ = 'default';
-    return { ok: true };
+// v4.25 (Phase 1). PIN guessing. A 4-digit PIN has 10,000 possibilities, so after 5 wrong
+// tries for one household the PIN door shuts for 15 minutes (even for the right PIN, or the
+// limit would be pointless). Signed-in members never go through the PIN, so they are not
+// affected. The count lives in CacheService, so it forgets by itself after the window.
+// The counter is updated under the script lock: without it, 30 requests sent at the same
+// instant would all read "0 wrong so far" and all get a free guess.
+var PIN_MAX_WRONG_ = 5;
+var PIN_LOCK_SECONDS_ = 900;
+function pinFailKey_(hh) { return 'pinfail_' + String(hh).trim().toLowerCase(); }
+function pinLocked_(hh) {
+  return Number(CacheService.getScriptCache().get(pinFailKey_(hh)) || 0) >= PIN_MAX_WRONG_;
+}
+function pinWrong_(hh) {
+  const cache = CacheService.getScriptCache(), key = pinFailKey_(hh);
+  const lock = LockService.getScriptLock();
+  let have = false;
+  try { have = lock.tryLock(3000); } catch (e) { have = false; }
+  try {
+    cache.put(key, String(Number(cache.get(key) || 0) + 1), PIN_LOCK_SECONDS_);
+  } finally { if (have) { try { lock.releaseLock(); } catch (e) {} } }
+}
+var PIN_LOCKED_MSG_ = 'Too many wrong PINs. This kitchen is locked for 15 minutes.';
+// The single place a typed PIN is compared. Returns null when it is right, else an error object.
+// An empty registry PIN means the kitchen has none (no check, no counting).
+function checkPin_(hh, typed, expected) {
+  if (!expected) return null;
+  if (pinLocked_(hh)) return { error: PIN_LOCKED_MSG_, locked: true };
+  if (String(typed || '').trim() === expected) {
+    CacheService.getScriptCache().remove(pinFailKey_(hh));
+    return null;
   }
+  pinWrong_(hh);
+  return { error: pinLocked_(hh) ? PIN_LOCKED_MSG_ : 'Bad PIN', locked: pinLocked_(hh) };
+}
+
+// Owner tool: opens a locked kitchen straight away instead of waiting 15 minutes.
+// Runs before household resolution (a locked kitchen cannot resolve), so it asks for the owner key.
+function unlockHousehold(body) {
+  const denied = requireOwner_(body);
+  if (denied) return denied;
+  const hh = String((body && body.hh) || '').trim().toLowerCase();
+  if (!hh) return { error: 'hh required' };
+  CacheService.getScriptCache().remove(pinFailKey_(hh));
+  return { success: true, unlocked: hh };
+}
+
+function resolveHousehold_(hh, pin, email) {
+  // v4.25 (Phase 1). No household name = refused. This used to fall through to the ORIGINAL
+  // spreadsheet (the one holding the registry and every kitchen's PIN) with no PIN at all, so
+  // anyone who knew the web address could read it or write into it. Every phone since v4.0
+  // sends a household name on every request after setup; create/join/sign-in answer earlier.
+  if (!hh) return { error: 'Household required' };
   hh = String(hh).trim().toLowerCase();
   const cache = CacheService.getScriptCache();
   const ckey = 'hh_' + hh;
@@ -3772,8 +3775,9 @@ function resolveHousehold_(hh, pin, email) {
     /* member: no PIN needed */
   } else if (authRequired_()) {
     return { error: email ? 'Not a member of this household' : 'Sign in required' };
-  } else if (row.pin && String(pin || '').trim() !== row.pin) {
-    return { error: 'Bad PIN' };
+  } else {
+    const bad = checkPin_(hh, pin, row.pin);
+    if (bad) return bad;
   }
   if (!row.sheetId) return { error: 'Household has no spreadsheet' };
 
@@ -3855,7 +3859,7 @@ function logEvent(body) {
   const now = new Date();
   getSheet('Events').appendRow([
     now,
-    Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd'),
+    Utilities.formatDate(now, 'Asia/Kolkata', 'yyyy-MM-dd'),   // v4.25: IST, whatever the project timezone
     String((body && body.person) || ''),
     ev,
     String((body && body.detail) || ''),
@@ -3867,19 +3871,33 @@ function logEvent(body) {
 // The six checks, minus the two that need a tap in the UI (translation job,
 // food accepted). Returns raw counts alongside the verdicts — a check that only
 // says pass/fail is a check you can't debug.
+// v4.25. The calendar day (IST) of a sheet value: a real Date, "2026-10-21 …", or the en-IN
+// text "21/10/2026, 1:05:00 am" that logMeal has written since v4.21. new Date() cannot read
+// the last one (it gives Invalid Date, or the wrong month when the day is 12 or less), which
+// silently dropped meals out of checks 1 and 3. '' when there is no date.
+function istDay_(v) {
+  if (v instanceof Date) return isNaN(v.getTime()) ? '' : Utilities.formatDate(v, 'Asia/Kolkata', 'yyyy-MM-dd');
+  const s = String(v == null ? '' : v).trim();
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return m[1] + '-' + m[2] + '-' + m[3];
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m) return m[3] + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[1]).slice(-2);
+  return '';
+}
+
 function getChecks(body) {
   const days = Math.max(1, Number((body && body.days) || 14));
-  const tz = Session.getScriptTimeZone();
-  const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - days);
-  const dayOf = d => Utilities.formatDate(new Date(d), tz, 'yyyy-MM-dd');
+  const cutoffDay = istDay_(new Date(Date.now() - days * 86400000));
 
+  // Days come from the timestamp in IST, not from the stored Day column, which was written in
+  // the project's timezone before v4.25.
   const events = getDataRows(getSheet('Events'))
-    .filter(r => r[0] && new Date(r[0]) >= cutoff)
-    .map(r => ({ ts: new Date(r[0]), day: String(r[1]), event: String(r[3]), detail: String(r[4]) }));
+    .filter(r => istDay_(r[0]) && istDay_(r[0]) >= cutoffDay)
+    .map(r => ({ ts: new Date(r[0]), day: istDay_(r[0]), event: String(r[3]), detail: String(r[4]) }));
 
   const meals = getDataRows(getSheet('MealLog'))
-    .filter(r => r[0] && new Date(r[0]) >= cutoff)
-    .map(r => ({ day: dayOf(r[0]), dish: String(r[1]).toLowerCase().trim(), source: String(r[7] || '') }));
+    .filter(r => istDay_(r[0]) && istDay_(r[0]) >= cutoffDay)
+    .map(r => ({ day: istDay_(r[0]), dish: String(r[1]).toLowerCase().trim(), source: String(r[7] || '') }));
 
   const byDay = {};
   events.forEach(e => { (byDay[e.day] = byDay[e.day] || []).push(e); });
@@ -3918,8 +3936,7 @@ function getChecks(body) {
     prepShown++;
     const dish = e.detail.toLowerCase().trim();
     if (!dish) return;
-    const next = new Date(e.ts); next.setDate(next.getDate() + 1);
-    const nextDay = dayOf(next);
+    const nextDay = istDay_(new Date(e.ts.getTime() + 86400000));
     if (meals.some(m => m.day === nextDay && m.dish.indexOf(dish) > -1)) prepLanded++;
   });
 
